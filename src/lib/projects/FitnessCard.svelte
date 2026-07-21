@@ -102,6 +102,7 @@
       if (item.y >= floor) {
         item.y = floor;
         item.vy *= -0.28;
+        item.vx *= 0.72;
       }
     }
 
@@ -128,6 +129,7 @@
             a.vx -= speed * normalX * 1.24;
             a.vy -= speed * normalY * 1.24;
           }
+          a.vx *= 0.82;
         }
         if (bActive) {
           b.x -= normalX * (aActive ? separation / 2 : separation);
@@ -137,6 +139,7 @@
             b.vx -= speed * normalX * 1.24;
             b.vy -= speed * normalY * 1.24;
           }
+          b.vx *= 0.82;
         }
       }
     }

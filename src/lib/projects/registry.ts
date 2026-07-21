@@ -1,3 +1,4 @@
+import ChordNotesCard from './ChordNotesCard.svelte';
 import FitnessCard from './FitnessCard.svelte';
 import type { ProjectDefinition } from '$lib/types/projects';
 
@@ -10,6 +11,16 @@ export const projects = [
     order: 1,
     theme: { background: '#d9f26b', foreground: '#101010', accent: '#101010' },
     visual: FitnessCard
+  },
+  {
+    slug: 'chord-notes',
+    title: 'Chord / Notes Learner',
+    description:
+      'A tactile way to learn notes and chords with a MIDI keyboard.',
+    href: 'https://chords.example.com',
+    order: 2,
+    theme: { background: '#f5a8d0', foreground: '#101010', accent: '#101010' },
+    visual: ChordNotesCard
   }
 ] satisfies readonly ProjectDefinition[];
 

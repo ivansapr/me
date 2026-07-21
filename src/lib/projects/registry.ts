@@ -7,7 +7,7 @@ export const projects = [
     slug: 'fitness-tracker',
     title: 'Fitness Tracker',
     description: 'A small PWA for keeping strength training honest.',
-    href: 'https://fitness.example.com',
+    href: 'https://gym.ivansapr.me',
     order: 1,
     theme: { background: '#d9f26b', foreground: '#101010', accent: '#101010' },
     visual: FitnessCard
@@ -17,7 +17,7 @@ export const projects = [
     title: 'Chord / Notes Learner',
     description:
       'A tactile way to learn notes and chords with a MIDI keyboard.',
-    href: 'https://chords.example.com',
+    href: 'https://chord.ivansapr.me',
     order: 2,
     theme: { background: '#f5a8d0', foreground: '#101010', accent: '#101010' },
     visual: ChordNotesCard

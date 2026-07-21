@@ -1,398 +1,439 @@
 <script lang="ts">
-  import { SvelteSet } from 'svelte/reactivity';
+  import { onMount } from 'svelte';
   import type { ProjectCardVisualProps } from '$lib/types/projects';
+  import eatSprite from './eat-alpha.png';
+  import hungrySprite from './hungry-alpha.png';
+  import idleSprite from './idle-alpha.png';
+  import sleepSprite from './sleep-alpha.png';
+  import sleepySprite from './sleepy-alpha.png';
+  import weakSprite from './weak-alpha.png';
+  import workoutSprite from './workout-alpha.png';
+  import {
+    applyPetAction,
+    decayStats,
+    getNeedState,
+    INITIAL_STATS,
+    PET_STORAGE_KEY,
+    restorePet,
+    serializePet,
+    type PetAction,
+    type PetDisplayState,
+    type PetStats
+  } from './fitnessPet';
 
-  type Equipment = 'dumbbell' | 'barbell' | 'kettlebell';
-  type Item = {
-    id: number;
-    kind: Equipment;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    startedAt: number;
-    rotate: number;
-    width: number;
-    height: number;
+  const actionDurationMs = 1_200;
+  const decayIntervalMs = 5_000;
+  const spriteSheets: Record<PetDisplayState, string> = {
+    idle: idleSprite,
+    eat: eatSprite,
+    sleep: sleepSprite,
+    workout: workoutSprite,
+    hungry: hungrySprite,
+    sleepy: sleepySprite,
+    weak: weakSprite
   };
-
-  const dimensions: Record<Equipment, { width: number; height: number }> = {
-    dumbbell: { width: 46, height: 18 },
-    barbell: { width: 62, height: 15 },
-    kettlebell: { width: 25, height: 27 }
+  const statusLabels: Record<PetDisplayState, string> = {
+    idle: 'Ready to train',
+    eat: 'Eating',
+    sleep: 'Sleeping',
+    workout: 'Working out',
+    hungry: 'Hungry',
+    sleepy: 'Sleepy',
+    weak: 'Feeling weak'
   };
-  const minimumPhysicsDuration = 700;
 
   let { theme }: ProjectCardVisualProps = $props();
-  let items = $state<Item[]>([]);
-  let dropZone: HTMLDivElement | undefined;
-  let physicsFrame: number | undefined;
-  const activeItemIds = new SvelteSet<number>();
-  let nextId = 1;
+  let stats = $state<PetStats>({ ...INITIAL_STATS });
+  let activeAction = $state<PetAction | null>(null);
+  let lastUpdated = 0;
+  let actionTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function captureDropZone(node: HTMLDivElement) {
-    dropZone = node;
+  const needState = $derived(getNeedState(stats));
+  const displayState = $derived<PetDisplayState>(
+    activeAction ?? needState ?? 'idle'
+  );
+  const status = $derived(statusLabels[displayState]);
+  const spriteSheet = $derived(spriteSheets[displayState]);
+
+  onMount(() => {
+    const now = Date.now();
+    stats = restorePet(readStoredPet(), now);
+    lastUpdated = now;
+    persist(now);
+
+    const decayTimer = window.setInterval(updateDecay, decayIntervalMs);
     return () => {
-      if (dropZone === node) dropZone = undefined;
+      window.clearInterval(decayTimer);
+      clearTimeout(actionTimer);
+      updateDecay();
     };
+  });
+
+  function readStoredPet(): string | null {
+    try {
+      return localStorage.getItem(PET_STORAGE_KEY);
+    } catch {
+      return null;
+    }
   }
 
-  function ovalDistance(a: Item, b: Item) {
-    const dx = a.x + a.width / 2 - (b.x + b.width / 2);
-    const dy = a.y + a.height / 2 - (b.y + b.height / 2);
-    return {
-      dx,
-      dy,
-      distance: Math.hypot(
-        dx / ((a.width + b.width) / 2),
-        dy / ((a.height + b.height) / 2)
-      )
-    };
+  function persist(now = Date.now()) {
+    try {
+      localStorage.setItem(PET_STORAGE_KEY, serializePet(stats, now));
+    } catch {
+      // The game remains session-only when browser storage is unavailable.
+    }
   }
 
-  function addItem(kind: Equipment) {
-    if (!dropZone) return;
-    const bounds = dropZone.getBoundingClientRect();
-    const size = dimensions[kind];
-    const id = nextId++;
-    items = [
-      ...items,
-      {
-        id,
-        kind,
-        ...size,
-        x: Math.min(
-          Math.max(0, bounds.width * (0.36 + (id % 3) * 0.08)),
-          Math.max(0, bounds.width - size.width)
-        ),
-        y: -size.height,
-        vx: ((id % 3) - 1) * 0.38,
-        vy: 0.6,
-        startedAt: performance.now(),
-        rotate: ((id * 13) % 17) - 8
-      }
-    ];
-    activeItemIds.add(id);
-    if (physicsFrame === undefined)
-      physicsFrame = requestAnimationFrame(simulate);
+  function updateDecay() {
+    if (!lastUpdated) return;
+    const now = Date.now();
+    stats = decayStats(stats, now - lastUpdated);
+    lastUpdated = now;
+    persist(now);
   }
 
-  function simulate(now: number) {
-    if (!dropZone) {
-      physicsFrame = undefined;
-      return;
-    }
+  function handleVisibilityChange() {
+    updateDecay();
+  }
 
-    const bounds = dropZone.getBoundingClientRect();
-    for (const item of items) {
-      if (!activeItemIds.has(item.id)) continue;
-      const floor = Math.max(0, bounds.height - item.height);
-      item.vx *= 0.92;
-      item.vy = Math.min(item.vy + 0.34, 5.5);
-      item.x += item.vx;
-      item.y += item.vy;
+  function performAction(action: PetAction) {
+    if (activeAction) return;
 
-      if (item.x < 0 || item.x > bounds.width - item.width) {
-        item.x = Math.min(
-          Math.max(0, item.x),
-          Math.max(0, bounds.width - item.width)
-        );
-        item.vx *= -0.38;
-      }
-      if (item.y >= floor) {
-        item.y = floor;
-        item.vy *= -0.28;
-        item.vx *= 0.72;
-      }
-    }
+    updateDecay();
+    stats = applyPetAction(stats, action);
+    activeAction = action;
+    persist(lastUpdated);
+    actionTimer = setTimeout(() => {
+      activeAction = null;
+      actionTimer = undefined;
+    }, actionDurationMs);
+  }
 
-    for (let first = 0; first < items.length; first += 1) {
-      for (let second = first + 1; second < items.length; second += 1) {
-        const a = items[first];
-        const b = items[second];
-        const aActive = activeItemIds.has(a.id);
-        const bActive = activeItemIds.has(b.id);
-        if (!aActive && !bActive) continue;
-
-        const { dx, dy, distance } = ovalDistance(a, b);
-        if (distance >= 1) continue;
-
-        const length = Math.hypot(dx, dy) || 1;
-        const normalX = dx / length;
-        const normalY = dy / length;
-        const separation = (1 - distance) * 5;
-        if (aActive) {
-          a.x += normalX * (bActive ? separation / 2 : separation);
-          a.y += normalY * (bActive ? separation / 2 : separation);
-          const speed = a.vx * normalX + a.vy * normalY;
-          if (speed < 0) {
-            a.vx -= speed * normalX * 1.24;
-            a.vy -= speed * normalY * 1.24;
-          }
-          a.vx *= 0.82;
-        }
-        if (bActive) {
-          b.x -= normalX * (aActive ? separation / 2 : separation);
-          b.y -= normalY * (aActive ? separation / 2 : separation);
-          const speed = b.vx * normalX + b.vy * normalY;
-          if (speed > 0) {
-            b.vx -= speed * normalX * 1.24;
-            b.vy -= speed * normalY * 1.24;
-          }
-          b.vx *= 0.82;
-        }
-      }
-    }
-
-    for (const item of items) {
-      if (!activeItemIds.has(item.id)) continue;
-      const floor = Math.max(0, bounds.height - item.height);
-      item.x = Math.min(
-        Math.max(0, item.x),
-        Math.max(0, bounds.width - item.width)
-      );
-      item.y = Math.min(Math.max(0, item.y), floor);
-      if (
-        item.y === floor &&
-        Math.abs(item.vx) + Math.abs(item.vy) < 0.55 &&
-        now - item.startedAt >= minimumPhysicsDuration
-      ) {
-        item.vx = 0;
-        item.vy = 0;
-        activeItemIds.delete(item.id);
-      }
-    }
-
-    items = [...items];
-    physicsFrame = activeItemIds.size
-      ? requestAnimationFrame(simulate)
-      : undefined;
+  function rounded(value: number) {
+    return Math.round(value);
   }
 </script>
 
-<div class="gym-tracker" style:--card-accent={theme.accent}>
-  <div class="equipment-row" aria-label="Gym equipment">
-    <button
-      class="equipment-button"
-      type="button"
-      onclick={() => addItem('dumbbell')}
-      aria-label="Add dumbbell"
-      ><span class="dumbbell-icon" aria-hidden="true"
-        ><i></i><b></b><i></i></span
-      ></button
-    >
-    <button
-      class="equipment-button"
-      type="button"
-      onclick={() => addItem('barbell')}
-      aria-label="Add barbell"
-      ><span class="barbell-icon" aria-hidden="true"
-        ><i></i><i></i><b></b><i></i><i></i></span
-      ></button
-    >
-    <button
-      class="equipment-button"
-      type="button"
-      onclick={() => addItem('kettlebell')}
-      aria-label="Add kettlebell"
-      ><span class="kettlebell-icon" aria-hidden="true"><i></i></span></button
-    >
+<svelte:window onpagehide={updateDecay} />
+<svelte:document onvisibilitychange={handleVisibilityChange} />
+
+<div
+  class="tamagotchi"
+  style:--card-background={theme.background}
+  style:--card-accent={theme.accent}
+  aria-label="Bodybuilder Tamagotchi"
+>
+  <div class="screen">
+    <div class="screen__header">
+      <span>GYM BUDDY</span>
+      <span
+        class="status"
+        role="status"
+        aria-label="Bodybuilder status"
+        aria-live="polite">{status}</span
+      >
+    </div>
+
+    <div class="screen__content">
+      <div class="stage" aria-hidden="true">
+        <div class="floor"></div>
+        <div
+          class={['sprite', { 'sprite--action': activeAction }]}
+          style:--sprite-sheet={`url("${spriteSheet}")`}
+        ></div>
+      </div>
+
+      <div class="stats" aria-label="Bodybuilder needs">
+        <div class="stat">
+          <div class="stat__label">
+            <span id="fullness-label">Fullness</span>
+            <output>{rounded(stats.fullness)}</output>
+          </div>
+          <progress
+            aria-labelledby="fullness-label"
+            max="100"
+            value={stats.fullness}
+          ></progress>
+        </div>
+        <div class="stat">
+          <div class="stat__label">
+            <span id="energy-label">Energy</span>
+            <output>{rounded(stats.energy)}</output>
+          </div>
+          <progress
+            aria-labelledby="energy-label"
+            max="100"
+            value={stats.energy}
+          ></progress>
+        </div>
+        <div class="stat">
+          <div class="stat__label">
+            <span id="strength-label">Strength</span>
+            <output>{rounded(stats.strength)}</output>
+          </div>
+          <progress
+            aria-labelledby="strength-label"
+            max="100"
+            value={stats.strength}
+          ></progress>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <div
-    class="drop-zone"
-    {@attach captureDropZone}
-    aria-label={`${items.length} items added`}
-  >
-    {#each items as item (item.id)}
-      <div
-        class={`item item--${item.kind}`}
-        style:transform={`translate(${item.x}px, ${item.y}px) rotate(${item.rotate}deg)`}
-        aria-label={`${item.kind} added`}
-      >
-        {#if item.kind === 'dumbbell'}
-          <span></span><i></i><span></span>
-        {:else if item.kind === 'barbell'}
-          <span></span><span></span><i></i><span></span><span></span>
-        {:else}
-          <i></i>
-        {/if}
-      </div>
-    {/each}
+  <div class="actions" aria-label="Care actions">
+    <button
+      type="button"
+      onclick={() => performAction('eat')}
+      disabled={activeAction !== null}
+    >
+      <span aria-hidden="true">🍗</span>
+      Eat
+    </button>
+    <button
+      type="button"
+      onclick={() => performAction('workout')}
+      disabled={activeAction !== null}
+    >
+      <span aria-hidden="true">🏋</span>
+      Exercise
+    </button>
+    <button
+      type="button"
+      onclick={() => performAction('sleep')}
+      disabled={activeAction !== null}
+    >
+      <span aria-hidden="true">☾</span>
+      Sleep
+    </button>
   </div>
 </div>
 
 <style>
-  .gym-tracker {
-    position: relative;
+  .tamagotchi {
+    display: grid;
     min-height: 15rem;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0.55rem;
     overflow: hidden;
+    padding: 0.65rem;
     border: 1px solid color-mix(in srgb, var(--card-accent) 45%, transparent);
     border-radius: 0.65rem;
     background:
-      radial-gradient(
-        circle at 12% 4%,
-        rgb(255 255 255 / 38%),
-        transparent 26%
-      ),
-      repeating-linear-gradient(
-        135deg,
-        rgb(24 50 25 / 11%) 0 1px,
-        transparent 1px 9px
-      ),
-      linear-gradient(145deg, #c5dc79, #9cbd62 62%, #80a952);
+      radial-gradient(circle at 12% 4%, rgb(255 255 255 / 42%), transparent 28%),
+      repeating-linear-gradient(135deg, rgb(24 50 25 / 10%) 0 1px, transparent 1px 9px),
+      var(--card-background);
     color: var(--card-accent);
   }
-  .equipment-row {
+
+  .screen {
+    min-height: 0;
+    overflow: hidden;
+    border: 0.18rem solid #2a1b2e;
+    border-radius: 0.5rem;
+    background: linear-gradient(145deg, #fff1c8, #f4bd70);
+    box-shadow:
+      inset 0 0 0 0.16rem #8e4d37,
+      0 0.22rem 0 #2a1b2e;
+  }
+
+  .screen__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.45rem 0.65rem 0.35rem;
+    border-bottom: 2px solid #8e4d37;
+    background: #6040a8;
+    color: #fff8df;
+    font-size: 0.58rem;
+    font-weight: 850;
+    letter-spacing: 0.09em;
+  }
+
+  .status {
+    overflow: hidden;
+    color: #f5b83b;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .screen__content {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(7rem, 1.1fr) minmax(6.5rem, 0.9fr);
+    align-items: center;
+  }
+
+  .stage {
     position: relative;
+    display: grid;
+    min-height: 8.3rem;
+    place-items: center;
+    overflow: hidden;
+    background:
+      linear-gradient(90deg, transparent 48%, rgb(255 255 255 / 25%) 49% 51%, transparent 52%),
+      linear-gradient(#ffc06a 0 67%, #e83d89 67% 70%, #6040a8 70%);
+  }
+
+  .floor {
+    position: absolute;
+    right: 8%;
+    bottom: 1rem;
+    left: 8%;
+    height: 0.35rem;
+    border-radius: 50%;
+    background: rgb(42 27 46 / 22%);
+  }
+
+  .sprite {
     z-index: 1;
+    width: 96px;
+    height: 128px;
+    background-image: var(--sprite-sheet);
+    background-position: 0 0;
+    background-size: 192px 128px;
+    image-rendering: pixelated;
+    animation: sprite-loop 700ms steps(1, end) infinite;
+  }
+
+  .sprite--action {
+    animation-duration: 600ms;
+  }
+
+  .stats {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.75rem 0.7rem 0.75rem 0.25rem;
+  }
+
+  .stat__label {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.18rem;
+    color: #2a1b2e;
+    font-size: 0.58rem;
+    font-weight: 800;
+    letter-spacing: 0.035em;
+    text-transform: uppercase;
+  }
+
+  output {
+    color: #6040a8;
+    font-variant-numeric: tabular-nums;
+  }
+
+  progress {
+    display: block;
+    width: 100%;
+    height: 0.55rem;
+    overflow: hidden;
+    border: 1px solid #2a1b2e;
+    border-radius: 0.15rem;
+    background: #fff8df;
+    accent-color: #2f6bff;
+  }
+
+  progress::-webkit-progress-bar {
+    background: #fff8df;
+  }
+
+  progress::-webkit-progress-value {
+    background: linear-gradient(90deg, #2f6bff, #e83d89);
+  }
+
+  progress::-moz-progress-bar {
+    background: linear-gradient(90deg, #2f6bff, #e83d89);
+  }
+
+  .actions {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.4rem;
-    margin: 0.65rem;
-    padding: 0.45rem;
-    border: 1px solid rgb(0 0 0 / 43%);
-    border-radius: 0.42rem;
-    background: #e5e0d1;
-    box-shadow:
-      0 0.18rem 0 rgb(0 0 0 / 42%),
-      inset 0 0.1rem 0 #fffdf4,
-      inset 0 -0.15rem 0 #bcb5a2;
   }
-  .equipment-button {
-    display: grid;
+
+  button {
+    display: flex;
     min-width: 0;
-    height: 3.1rem;
-    place-items: center;
-    border: 1px solid #a79f8e;
-    border-radius: 0.26rem;
-    background: linear-gradient(#f8f4e6, #d5cfbd);
-    box-shadow:
-      inset 0 0.1rem #fff,
-      0 0.08rem #8a816e;
+    min-height: 2.65rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.4rem 0.25rem;
+    border: 2px solid #2a1b2e;
+    border-radius: 0.32rem;
+    background: linear-gradient(#fff8df, #f5b83b);
+    box-shadow: 0 0.16rem 0 #2a1b2e;
+    color: #2a1b2e;
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 800;
     cursor: pointer;
+    touch-action: manipulation;
   }
-  .equipment-button:active {
-    transform: translateY(0.1rem);
-    box-shadow: inset 0 0.15rem #b5ad9c;
+
+  button:hover:not(:disabled) {
+    background: linear-gradient(#fff8df, #ff9f1c);
   }
-  .equipment-button:focus-visible {
-    outline: 2px solid #111;
+
+  button:active:not(:disabled) {
+    transform: translateY(0.12rem);
+    box-shadow: none;
+  }
+
+  button:focus-visible {
+    outline: 3px solid #2f6bff;
     outline-offset: 0.14rem;
   }
-  .dumbbell-icon,
-  .barbell-icon {
-    display: flex;
-    align-items: center;
-    height: 1.55rem;
-    filter: drop-shadow(0 0.12rem 0.06rem rgb(0 0 0 / 30%));
+
+  button:disabled {
+    cursor: wait;
+    opacity: 0.55;
   }
-  .dumbbell-icon i {
-    width: 0.46rem;
-    height: 1.45rem;
-    border: 1px solid #171716;
-    border-radius: 0.12rem;
-    background: linear-gradient(90deg, #111, #595950, #151514);
+
+  @keyframes sprite-loop {
+    0%,
+    49.99% {
+      background-position: 0 0;
+    }
+    50%,
+    100% {
+      background-position: -96px 0;
+    }
   }
-  .dumbbell-icon b {
-    width: 1.25rem;
-    height: 0.3rem;
-    background: repeating-linear-gradient(
-      90deg,
-      #858378 0 0.1rem,
-      #34342f 0.1rem 0.2rem
-    );
+
+  @media (max-width: 390px) {
+    .tamagotchi {
+      padding: 0.5rem;
+    }
+
+    .screen__content {
+      grid-template-columns: minmax(6.5rem, 1fr) minmax(6rem, 0.85fr);
+    }
+
+    .sprite {
+      transform: scale(0.88);
+    }
+
+    .stats {
+      padding-right: 0.5rem;
+    }
+
+    button {
+      font-size: 0.62rem;
+    }
   }
-  .barbell-icon i {
-    width: 0.28rem;
-    height: 0.85rem;
-    border: 1px solid #171716;
-    border-radius: 0.08rem;
-    background: #292926;
-  }
-  .barbell-icon i:nth-child(2),
-  .barbell-icon i:nth-child(4) {
-    height: 1.2rem;
-  }
-  .barbell-icon b {
-    width: 1.75rem;
-    height: 0.2rem;
-    background: #252522;
-  }
-  .kettlebell-icon {
-    position: relative;
-    display: block;
-    width: 1.55rem;
-    height: 1.35rem;
-    margin-top: 0.28rem;
-    border: 1px solid #171716;
-    border-radius: 48% 48% 42% 42%;
-    background: radial-gradient(circle at 36% 28%, #6a6a61, #1a1a18 65%);
-  }
-  .kettlebell-icon i {
-    position: absolute;
-    top: -0.62rem;
-    left: 0.38rem;
-    width: 0.72rem;
-    height: 0.78rem;
-    border: 0.22rem solid #262624;
-    border-bottom: 0;
-    border-radius: 0.55rem 0.55rem 0 0;
-  }
-  .drop-zone {
-    position: absolute;
-    inset: 4.9rem 0 0;
-    overflow: hidden;
-  }
-  .item {
-    position: absolute;
-    display: flex;
-    align-items: center;
-  }
-  .item--dumbbell span {
-    width: 0.45rem;
-    height: 1.1rem;
-    border: 1px solid #161616;
-    border-radius: 0.1rem;
-    background: #232321;
-  }
-  .item--dumbbell i {
-    width: 1.45rem;
-    height: 0.22rem;
-    background: #181817;
-  }
-  .item--barbell span {
-    width: 0.35rem;
-    height: 0.72rem;
-    border: 1px solid #161616;
-    border-radius: 0.08rem;
-    background: #242422;
-  }
-  .item--barbell span:nth-child(2),
-  .item--barbell span:nth-child(4) {
-    height: 0.95rem;
-  }
-  .item--barbell i {
-    width: 2.35rem;
-    height: 0.18rem;
-    background: #181817;
-  }
-  .item--kettlebell {
-    width: 1.55rem;
-    height: 1.45rem;
-    margin-bottom: 0.45rem;
-    border: 1px solid #161616;
-    border-radius: 48% 48% 42% 42%;
-    background: radial-gradient(circle at 36% 28%, #64645c, #1a1a18 65%);
-  }
-  .item--kettlebell i {
-    position: absolute;
-    top: -0.62rem;
-    left: 0.38rem;
-    width: 0.72rem;
-    height: 0.78rem;
-    border: 0.22rem solid #262624;
-    border-bottom: 0;
-    border-radius: 0.55rem 0.55rem 0 0;
+
+  @media (prefers-reduced-motion: reduce) {
+    .sprite {
+      animation: none;
+    }
+
+    button:active:not(:disabled) {
+      transform: none;
+    }
   }
 </style>

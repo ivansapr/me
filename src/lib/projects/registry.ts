@@ -1,6 +1,17 @@
+import FitnessCard from './FitnessCard.svelte';
 import type { ProjectDefinition } from '$lib/types/projects';
 
-export const projects: readonly ProjectDefinition[] = [];
+export const projects = [
+  {
+    slug: 'fitness-tracker',
+    title: 'Fitness Tracker',
+    description: 'A small PWA for keeping strength training honest.',
+    href: 'https://fitness.example.com',
+    order: 1,
+    theme: { background: '#d9f26b', foreground: '#101010', accent: '#101010' },
+    visual: FitnessCard
+  }
+] satisfies readonly ProjectDefinition[];
 
 export function validateProjectRegistry(
   entries: readonly ProjectDefinition[]

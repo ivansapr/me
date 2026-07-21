@@ -4,7 +4,9 @@ import { projects, validateProjectRegistry } from './registry';
 
 describe('project registry', () => {
   it('contains the initial projects in stable order', () => {
-    expect(projects.map((project) => project.slug)).toEqual([]);
+    expect(projects.map((project) => project.slug)).toEqual([
+      'fitness-tracker'
+    ]);
   });
 
   it('accepts the production registry', () => {

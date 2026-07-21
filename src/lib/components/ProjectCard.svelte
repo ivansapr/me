@@ -34,7 +34,8 @@
 <style>
   .project-card {
     display: flex;
-    min-height: 26rem;
+    height: 26rem;
+    max-height: 26rem;
     flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--ink);
@@ -43,6 +44,8 @@
   }
   .project-card__visual {
     flex: 1;
+    min-height: 0;
+    overflow: hidden;
     padding: 0.65rem;
   }
   .project-card__details {

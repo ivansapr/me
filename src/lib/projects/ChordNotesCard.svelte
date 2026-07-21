@@ -36,9 +36,16 @@
     },
     { note: 'B4', frequency: 493.88 }
   ];
+  const keyByNote = new Map(
+    keys.flatMap((key) => [key, ...(key.blackKey ? [key.blackKey] : [])]).map((key) => [key.note, key])
+  );
 
   let { theme }: ProjectCardVisualProps = $props();
   let audioContext: AudioContext | null = null;
+  let activePointerId: number | null = null;
+  let lastPlayedNote: string | null = null;
+  let pressedNote = $state<string | null>(null);
+  let keyboardReleaseTimer: ReturnType<typeof setTimeout> | undefined;
 
   function playNote(key: Key) {
     audioContext ??= new window.AudioContext();
@@ -59,7 +66,44 @@
   }
 
   function playOnKeyboardClick(event: MouseEvent, key: Key) {
-    if (event.detail === 0) playNote(key);
+    if (event.detail !== 0) return;
+
+    playNote(key);
+    pressedNote = key.note;
+    clearTimeout(keyboardReleaseTimer);
+    keyboardReleaseTimer = setTimeout(() => (pressedNote = null), 120);
+  }
+
+  function startPointer(event: PointerEvent, key: Key) {
+    clearTimeout(keyboardReleaseTimer);
+    activePointerId = event.pointerId;
+    lastPlayedNote = key.note;
+    pressedNote = key.note;
+    (event.currentTarget as HTMLButtonElement).setPointerCapture(event.pointerId);
+    playNote(key);
+  }
+
+  function playHoveredKey(event: PointerEvent) {
+    if (event.pointerId !== activePointerId) return;
+
+    const note = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLButtonElement>('button[data-note]')?.dataset.note;
+    if (!note || note === lastPlayedNote) return;
+
+    const key = keyByNote.get(note);
+    if (!key) return;
+
+    lastPlayedNote = note;
+    pressedNote = note;
+    playNote(key);
+  }
+
+  function endPointer(event: PointerEvent) {
+    if (event.pointerId !== activePointerId) return;
+    activePointerId = null;
+    lastPlayedNote = null;
+    pressedNote = null;
   }
 </script>
 
@@ -68,24 +112,33 @@
   style:--card-background={theme.background}
   style:--card-accent={theme.accent}
 >
-  <div class="piano" role="group" aria-label="Playable piano keyboard">
+  <div
+    class="piano"
+    role="group"
+    aria-label="Playable piano keyboard"
+    onpointermove={playHoveredKey}
+    onpointerup={endPointer}
+    onpointercancel={endPointer}
+  >
     {#each keys as key (key.note)}
       <div class="key-slot">
         <button
-          class="white-key"
+          class={['white-key', { 'is-pressed': pressedNote === key.note }]}
           type="button"
           aria-label={`Play ${key.note}`}
-          onpointerdown={() => playNote(key)}
+          data-note={key.note}
+          onpointerdown={(event) => startPointer(event, key)}
           onclick={(event) => playOnKeyboardClick(event, key)}
         >
           <span>{key.note.replace('4', '')}</span>
         </button>
         {#if key.blackKey}
           <button
-            class="black-key"
+            class={['black-key', { 'is-pressed': pressedNote === key.blackKey.note }]}
             type="button"
             aria-label={`Play ${key.blackKey.note}`}
-            onpointerdown={() => playNote(key.blackKey!)}
+            data-note={key.blackKey.note}
+            onpointerdown={(event) => startPointer(event, key.blackKey!)}
             onclick={(event) => playOnKeyboardClick(event, key.blackKey!)}
           >
             <span>{key.blackKey.note.replace('4', '')}</span>
@@ -150,7 +203,7 @@
     font-weight: 700;
   }
 
-  .white-key:active {
+  .white-key.is-pressed {
     transform: translateY(0.16rem);
     box-shadow: inset 0 0.18rem 0 #c5bba6;
   }
@@ -175,7 +228,7 @@
     font-weight: 700;
   }
 
-  .black-key:active {
+  .black-key.is-pressed {
     transform: translateY(0.13rem);
     box-shadow: inset 0 0.14rem 0 #050505;
   }
@@ -198,8 +251,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .white-key:active,
-    .black-key:active {
+    .white-key.is-pressed,
+    .black-key.is-pressed {
       transform: none;
     }
   }

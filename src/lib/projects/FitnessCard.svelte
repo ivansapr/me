@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity';
   import type { ProjectCardVisualProps } from '$lib/types/projects';
 
   type Equipment = 'dumbbell' | 'barbell' | 'kettlebell';
@@ -7,7 +8,9 @@
     kind: Equipment;
     x: number;
     y: number;
+    vx: number;
     vy: number;
+    startedAt: number;
     rotate: number;
     width: number;
     height: number;
@@ -18,18 +21,32 @@
     barbell: { width: 62, height: 15 },
     kettlebell: { width: 25, height: 27 }
   };
+  const minimumPhysicsDuration = 700;
 
   let { theme }: ProjectCardVisualProps = $props();
   let items = $state<Item[]>([]);
   let dropZone: HTMLDivElement | undefined;
   let physicsFrame: number | undefined;
-  const activeItemIds = new Set<number>();
+  const activeItemIds = new SvelteSet<number>();
   let nextId = 1;
 
   function captureDropZone(node: HTMLDivElement) {
     dropZone = node;
     return () => {
       if (dropZone === node) dropZone = undefined;
+    };
+  }
+
+  function ovalDistance(a: Item, b: Item) {
+    const dx = a.x + a.width / 2 - (b.x + b.width / 2);
+    const dy = a.y + a.height / 2 - (b.y + b.height / 2);
+    return {
+      dx,
+      dy,
+      distance: Math.hypot(
+        dx / ((a.width + b.width) / 2),
+        dy / ((a.height + b.height) / 2)
+      )
     };
   }
 
@@ -45,11 +62,13 @@
         kind,
         ...size,
         x: Math.min(
-          Math.max(0, bounds.width * (0.16 + ((id * 31) % 58) / 100)),
+          Math.max(0, bounds.width * (0.36 + (id % 3) * 0.08)),
           Math.max(0, bounds.width - size.width)
         ),
         y: -size.height,
+        vx: ((id % 3) - 1) * 0.38,
         vy: 0.6,
+        startedAt: performance.now(),
         rotate: ((id * 13) % 17) - 8
       }
     ];
@@ -58,7 +77,7 @@
       physicsFrame = requestAnimationFrame(simulate);
   }
 
-  function simulate() {
+  function simulate(now: number) {
     if (!dropZone) {
       physicsFrame = undefined;
       return;
@@ -68,27 +87,74 @@
     for (const item of items) {
       if (!activeItemIds.has(item.id)) continue;
       const floor = Math.max(0, bounds.height - item.height);
+      item.vx *= 0.92;
       item.vy = Math.min(item.vy + 0.34, 5.5);
-      item.y = Math.min(item.y + item.vy, floor);
-      let stable = item.y === floor;
+      item.x += item.vx;
+      item.y += item.vy;
 
-      for (const fixedItem of items) {
-        if (fixedItem.id === item.id || activeItemIds.has(fixedItem.id))
-          continue;
-        const horizontalOverlap =
-          Math.min(item.x + item.width, fixedItem.x + fixedItem.width) -
-          Math.max(item.x, fixedItem.x);
-        const reachesTop =
-          item.y + item.height >= fixedItem.y && item.y <= fixedItem.y;
+      if (item.x < 0 || item.x > bounds.width - item.width) {
+        item.x = Math.min(
+          Math.max(0, item.x),
+          Math.max(0, bounds.width - item.width)
+        );
+        item.vx *= -0.38;
+      }
+      if (item.y >= floor) {
+        item.y = floor;
+        item.vy *= -0.28;
+      }
+    }
 
-        if (horizontalOverlap > 4 && reachesTop) {
-          item.y = Math.max(0, fixedItem.y - item.height);
-          stable = true;
-          break;
+    for (let first = 0; first < items.length; first += 1) {
+      for (let second = first + 1; second < items.length; second += 1) {
+        const a = items[first];
+        const b = items[second];
+        const aActive = activeItemIds.has(a.id);
+        const bActive = activeItemIds.has(b.id);
+        if (!aActive && !bActive) continue;
+
+        const { dx, dy, distance } = ovalDistance(a, b);
+        if (distance >= 1) continue;
+
+        const length = Math.hypot(dx, dy) || 1;
+        const normalX = dx / length;
+        const normalY = dy / length;
+        const separation = (1 - distance) * 5;
+        if (aActive) {
+          a.x += normalX * (bActive ? separation / 2 : separation);
+          a.y += normalY * (bActive ? separation / 2 : separation);
+          const speed = a.vx * normalX + a.vy * normalY;
+          if (speed < 0) {
+            a.vx -= speed * normalX * 1.24;
+            a.vy -= speed * normalY * 1.24;
+          }
+        }
+        if (bActive) {
+          b.x -= normalX * (aActive ? separation / 2 : separation);
+          b.y -= normalY * (aActive ? separation / 2 : separation);
+          const speed = b.vx * normalX + b.vy * normalY;
+          if (speed > 0) {
+            b.vx -= speed * normalX * 1.24;
+            b.vy -= speed * normalY * 1.24;
+          }
         }
       }
+    }
 
-      if (stable) {
+    for (const item of items) {
+      if (!activeItemIds.has(item.id)) continue;
+      const floor = Math.max(0, bounds.height - item.height);
+      item.x = Math.min(
+        Math.max(0, item.x),
+        Math.max(0, bounds.width - item.width)
+      );
+      item.y = Math.min(Math.max(0, item.y), floor);
+      if (
+        item.y === floor &&
+        Math.abs(item.vx) + Math.abs(item.vy) < 0.55 &&
+        now - item.startedAt >= minimumPhysicsDuration
+      ) {
+        item.vx = 0;
         item.vy = 0;
         activeItemIds.delete(item.id);
       }

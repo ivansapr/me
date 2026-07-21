@@ -1,5 +1,6 @@
 import ChordNotesCard from './ChordNotesCard.svelte';
 import FitnessCard from './FitnessCard.svelte';
+import TickspotApiCard from './TickspotApiCard.svelte';
 import type { ProjectDefinition } from '$lib/types/projects';
 
 export const projects = [
@@ -21,6 +22,15 @@ export const projects = [
     order: 2,
     theme: { background: '#f5a8d0', foreground: '#101010', accent: '#101010' },
     visual: ChordNotesCard
+  },
+  {
+    slug: 'tickspot-api',
+    title: 'TickSpot API Wrapper',
+    description: 'An API wrapper for the TickSpot time tracker.',
+    href: 'https://tick.ivansapr.me',
+    order: 3,
+    theme: { background: '#a9d5ff', foreground: '#172554', accent: '#172554' },
+    visual: TickspotApiCard
   }
 ] satisfies readonly ProjectDefinition[];
 

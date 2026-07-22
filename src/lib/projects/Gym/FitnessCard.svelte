@@ -1,13 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { ProjectCardVisualProps } from '$lib/types/projects';
-  import eatSprite from './eat-alpha.png';
-  import hungrySprite from './hungry-alpha.png';
-  import idleSprite from './idle-alpha.png';
-  import sleepSprite from './sleep-alpha.png';
-  import sleepySprite from './sleepy-alpha.png';
-  import weakSprite from './weak-alpha.png';
-  import workoutSprite from './workout-alpha.png';
   import {
     applyPetAction,
     decayStats,
@@ -23,14 +16,14 @@
 
   const actionDurationMs = 1_200;
   const decayIntervalMs = 5_000;
-  const spriteSheets: Record<PetDisplayState, string> = {
-    idle: idleSprite,
-    eat: eatSprite,
-    sleep: sleepSprite,
-    workout: workoutSprite,
-    hungry: hungrySprite,
-    sleepy: sleepySprite,
-    weak: weakSprite
+  const spriteRows: Record<PetDisplayState, number> = {
+    weak: 0,
+    eat: 1,
+    hungry: 2,
+    workout: 3,
+    idle: 4,
+    sleepy: 5,
+    sleep: 6
   };
   const statusLabels: Record<PetDisplayState, string> = {
     idle: 'Ready to train',
@@ -53,7 +46,8 @@
     activeAction ?? needState ?? 'idle'
   );
   const status = $derived(statusLabels[displayState]);
-  const spriteSheet = $derived(spriteSheets[displayState]);
+  const spriteRow = $derived(spriteRows[displayState]);
+  const spriteYOffset = $derived(`${spriteRow * -128}px`);
 
   onMount(() => {
     const now = Date.now();
@@ -140,7 +134,7 @@
         <div class="floor"></div>
         <div
           class={['sprite', { 'sprite--action': activeAction }]}
-          style:--sprite-sheet={`url("${spriteSheet}")`}
+          style:--sprite-y={spriteYOffset}
         ></div>
       </div>
 
@@ -290,11 +284,11 @@
 
   .sprite {
     z-index: 1;
-    width: 96px;
+    width: 128px;
     height: 128px;
-    background-image: var(--sprite-sheet);
-    background-position: 0 0;
-    background-size: 192px 128px;
+    background-image: url('/sprites.png');
+    background-position: 0 var(--sprite-y);
+    background-size: 256px 896px;
     image-rendering: pixelated;
     animation: sprite-loop 700ms steps(1, end) infinite;
   }
@@ -397,11 +391,11 @@
   @keyframes sprite-loop {
     0%,
     49.99% {
-      background-position: 0 0;
+      background-position: 0 var(--sprite-y);
     }
     50%,
     100% {
-      background-position: -96px 0;
+      background-position: -128px var(--sprite-y);
     }
   }
 

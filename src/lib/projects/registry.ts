@@ -1,5 +1,5 @@
 import ChordNotesCard from './ChordNotesCard.svelte';
-import FitnessCard from './FitnessCard.svelte';
+import FitnessCard from './Gym/FitnessCard.svelte';
 import TickspotApiCard from './TickspotApiCard.svelte';
 import type { ProjectDefinition } from '$lib/types/projects';
 

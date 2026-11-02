@@ -6,26 +6,22 @@
   import { prizeLabels, prizeSrc, type Prize } from './wishlistPrizes';
   import type { ClawScene } from './wishlistScene';
 
-  const idleStatus = 'Move the claw, then press drop.';
+  const idleStatus = 'Hold the arrows to aim, then drop.';
 
   let { theme }: ProjectCardVisualProps = $props();
   let canvas = $state<HTMLCanvasElement>();
   let scene: ClawScene | undefined;
   let ready = $state(false);
+  let failed = $state(false);
   let busy = $state(false);
-  let remaining = $state(1);
+  let remaining = $state(0);
   let status = $state('Loading the machine…');
   let opened = $state<Prize | null>(null);
   let collected = $state<Prize[]>([]);
-  let magnet = $state(false);
-  let magnetPercent = $state(5);
-
-  $effect(() => {
-    scene?.setMagnet(magnet, magnetPercent);
-  });
 
   const pressed = new SvelteSet<ClawDirection>();
   let soldOut = $derived(ready && remaining === 0);
+  let locked = $derived(busy || !ready);
 
   onMount(() => {
     let disposed = false;
@@ -43,7 +39,8 @@
         status = idleStatus;
       })
       .catch(() => {
-        status = '3D view is not supported on this device.';
+        failed = true;
+        status = 'The 3D machine is not supported on this device.';
       });
 
     return () => {
@@ -64,7 +61,7 @@
   }
 
   function press(direction: ClawDirection, event: PointerEvent) {
-    if (busy || !ready) return;
+    if (locked || event.button !== 0) return;
     opened = null;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     pressed.add(direction);
@@ -72,15 +69,34 @@
   }
 
   function release(direction: ClawDirection) {
-    pressed.delete(direction);
+    if (!pressed.delete(direction)) return;
     applyDirection();
+  }
+
+  function step(direction: ClawDirection) {
+    if (locked) return;
+    opened = null;
+    scene?.nudge(sumDirections([direction]));
   }
 
   // Keyboard and assistive-technology activation arrives as a click without pointer detail.
   function nudge(direction: ClawDirection, event: MouseEvent) {
-    if (event.detail !== 0 || busy || !ready) return;
-    opened = null;
-    scene?.nudge(sumDirections([direction]));
+    if (event.detail === 0) step(direction);
+  }
+
+  const keyDirections: Record<string, ClawDirection> = {
+    ArrowUp: 'back',
+    ArrowLeft: 'left',
+    ArrowDown: 'front',
+    ArrowRight: 'right'
+  };
+
+  // Arrow keys steer while any pad button has focus.
+  function onPadKey(event: KeyboardEvent) {
+    const direction = keyDirections[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    step(direction);
   }
 
   async function drop() {
@@ -92,11 +108,12 @@
     status = 'Dropping…';
     const result = await scene.drop();
     busy = false;
-    if (result.kind === 'slip') status = 'It slipped! Try again.';
+    if (result.kind === 'slip') status = 'So close — it slipped! Try again.';
     else if (result.kind === 'miss')
       status = 'Nothing there. Try another spot.';
     remaining = scene.remaining;
-    if (remaining === 0 && result.kind !== 'prize') status = 'Machine empty.';
+    if (remaining === 0 && result.kind !== 'prize')
+      status = 'The machine is empty.';
   }
 
   function reset() {
@@ -110,21 +127,29 @@
 
   const controls: { direction: ClawDirection; label: string; arrow: string }[] =
     [
-      { direction: 'back', label: 'Move claw back', arrow: '↑' },
-      { direction: 'left', label: 'Move claw left', arrow: '←' },
-      { direction: 'front', label: 'Move claw forward', arrow: '↓' },
-      { direction: 'right', label: 'Move claw right', arrow: '→' }
+      { direction: 'back', label: 'Move claw back', arrow: '▲' },
+      { direction: 'left', label: 'Move claw left', arrow: '◀' },
+      { direction: 'front', label: 'Move claw forward', arrow: '▼' },
+      { direction: 'right', label: 'Move claw right', arrow: '▶' }
     ];
 </script>
 
 <div
   class="wishlist-game"
   style:--card-background={theme.background}
-  style:--card-foreground={theme.foreground}
+  style:--ink={theme.foreground}
   style:--card-accent={theme.accent}
 >
-  <div class="field">
-    <canvas bind:this={canvas} aria-label="3D claw machine"></canvas>
+  <div
+    class="field"
+    class:failed
+    role="img"
+    aria-label="3D claw machine filled with prize balls"
+  >
+    <canvas bind:this={canvas} aria-hidden="true"></canvas>
+    {#if ready}
+      <span class="counter" aria-hidden="true">{remaining} left</span>
+    {/if}
   </div>
 
   <div class="console">
@@ -132,7 +157,7 @@
       {#if opened}
         <img class="reveal" src={prizeSrc(opened)} alt="" />
       {/if}
-      {status}
+      <span>{status}</span>
     </p>
 
     <div class="pad" role="group" aria-label="Move claw">
@@ -140,55 +165,36 @@
         <button
           type="button"
           class="pad-{direction}"
+          class:held={pressed.has(direction)}
           aria-label={label}
-          disabled={busy || !ready}
+          disabled={locked}
           onpointerdown={(event) => press(direction, event)}
           onpointerup={() => release(direction)}
           onpointercancel={() => release(direction)}
-          onclick={(event) => nudge(direction, event)}>{arrow}</button
+          onlostpointercapture={() => release(direction)}
+          onclick={(event) => nudge(direction, event)}
+          onkeydown={onPadKey}><span aria-hidden="true">{arrow}</span></button
         >
       {/each}
     </div>
 
     {#if soldOut}
-      <button type="button" class="drop" onclick={reset}>Play again</button>
+      <button type="button" class="drop" disabled={busy} onclick={reset}
+        >Play again</button
+      >
     {:else}
-      <button
-        type="button"
-        class="drop"
-        disabled={busy || !ready}
-        onclick={drop}>Drop</button
+      <button type="button" class="drop" disabled={locked} onclick={drop}
+        >{busy ? 'Grabbing…' : 'Drop'}</button
       >
     {/if}
-
-    <div class="debug">
-      <button
-        type="button"
-        class="magnet"
-        aria-pressed={magnet}
-        onclick={() => (magnet = !magnet)}
-        >Magnet {magnet ? 'on' : 'off'}</button
-      >
-      {#if magnet}
-        <label>
-          <span class="sr-only">Magnet strength percent</span>
-          <input
-            type="range"
-            min="1"
-            max="10"
-            step="1"
-            bind:value={magnetPercent}
-          />
-          <output>{magnetPercent}%</output>
-        </label>
-      {/if}
-    </div>
 
     <ul class="shelf" aria-label="Collected prizes">
       {#each collected as prize, index (index)}
         <li title={prizeLabels[prize]}>
           <img src={prizeSrc(prize)} alt={prizeLabels[prize]} />
         </li>
+      {:else}
+        <li class="empty">Prizes land here</li>
       {/each}
     </ul>
   </div>
@@ -196,52 +202,42 @@
 
 <style>
   .wishlist-game {
-    --ink: #3b1d0f;
-    --glass: rgb(255 255 255 / 28%);
+    --paper: #fff4e6;
+    --press: 0.2rem;
     display: grid;
+    height: 100%;
     min-height: 15rem;
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-    gap: 0.6rem;
-    padding: 0.55rem;
+    box-sizing: border-box;
+    grid-template-columns: minmax(0, 1.15fr) minmax(8.5rem, 0.85fr);
+    gap: 0.7rem;
+    padding: 0.7rem;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
     border-radius: 0.65rem;
     background:
-      radial-gradient(circle at 0 0, rgb(255 255 255 / 60%), transparent 35%),
+      radial-gradient(circle at 0 0, rgb(255 255 255 / 60%), transparent 40%),
       var(--card-background);
     color: var(--ink);
+    container-type: inline-size;
   }
 
   .field {
     position: relative;
     width: 100%;
+    max-height: 100%;
     aspect-ratio: 1;
     align-self: center;
-    container-type: inline-size;
+    justify-self: center;
     overflow: hidden;
-    border-radius: 0.5rem;
+    border-radius: 0.55rem;
     background: linear-gradient(160deg, #fff0dc, #ffc89a);
-    box-shadow: inset 0 0 0 2px var(--ink);
+    box-shadow:
+      inset 0 0 0 2px var(--ink),
+      0 0.25rem 0 var(--ink);
   }
 
-  .console {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 0.4rem;
-  }
-
-  .status {
-    min-height: 2.1em;
-    margin: 0;
-    padding: 0.3rem 0.4rem;
-    border: 2px solid var(--ink);
-    border-radius: 0.35rem;
-    background: #fff0dc;
-    font-size: 0.6rem;
-    font-weight: 800;
-    line-height: 1.25;
+  .field.failed canvas {
+    visibility: hidden;
   }
 
   canvas {
@@ -250,138 +246,164 @@
     height: 100%;
   }
 
+  .counter {
+    position: absolute;
+    top: 0.45rem;
+    left: 0.45rem;
+    padding: 0.15rem 0.45rem;
+    border: 2px solid var(--ink);
+    border-radius: 999px;
+    background: var(--paper);
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  .console {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 0.55rem;
+  }
+
+  .status {
+    display: flex;
+    min-height: 3.2em;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0.4rem 0.5rem;
+    border: 2px solid var(--ink);
+    border-radius: 0.45rem;
+    background: var(--paper);
+    font-size: 0.74rem;
+    font-weight: 750;
+    line-height: 1.3;
+    text-wrap: pretty;
+  }
+
   .reveal {
-    display: inline-block;
-    width: 1.3rem;
-    height: 1.3rem;
-    margin-right: 0.25rem;
-    vertical-align: middle;
+    width: 1.6rem;
+    height: 1.6rem;
+    flex-shrink: 0;
     animation: pop 0.8s cubic-bezier(0.3, 1.5, 0.5, 1) both;
   }
 
   .pad {
     display: grid;
-    grid-template-columns: repeat(3, 2.1rem);
-    grid-template-rows: repeat(2, 2.1rem);
-    gap: 0.25rem;
+    grid-template-columns: repeat(3, 2.5rem);
+    grid-template-rows: repeat(2, 2.5rem);
+    gap: 0.3rem;
     justify-content: center;
   }
 
-  .pad .pad-back {
+  .pad-back {
     grid-column: 2;
   }
 
-  .pad .pad-left {
+  .pad-left {
     grid-row: 2;
     grid-column: 1;
   }
 
-  .pad .pad-front {
+  .pad-front {
     grid-row: 2;
     grid-column: 2;
   }
 
-  .pad .pad-right {
+  .pad-right {
     grid-row: 2;
     grid-column: 3;
   }
 
   button {
     display: grid;
-    min-width: 2.1rem;
-    min-height: 2.1rem;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    margin: 0;
     place-items: center;
     border: 2px solid var(--ink);
-    border-radius: 0.4rem;
-    background: #fff0dc;
-    box-shadow: 0 0.18rem var(--ink);
+    border-radius: 0.5rem;
+    background: var(--paper);
+    box-shadow: 0 var(--press) 0 var(--ink);
     color: var(--ink);
     cursor: pointer;
     font: inherit;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-weight: 900;
     touch-action: manipulation;
+    transition:
+      transform 80ms ease,
+      box-shadow 80ms ease,
+      background-color 120ms ease;
+    -webkit-tap-highlight-color: transparent;
   }
 
-  button:active:not(:disabled) {
-    box-shadow: 0 0 var(--ink);
-    transform: translateY(0.18rem);
+  button:hover:not(:disabled) {
+    background: #fff;
+  }
+
+  button:active:not(:disabled),
+  button.held {
+    box-shadow: 0 0 0 var(--ink);
+    transform: translateY(var(--press));
   }
 
   button:focus-visible {
-    outline: 3px solid #4f46e5;
+    outline: 3px solid var(--card-accent);
     outline-offset: 2px;
   }
 
   button:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.45;
   }
 
   .pad button {
-    position: static;
-    width: auto;
-    height: auto;
-    margin: 0;
     touch-action: none;
-    transform: none;
+    user-select: none;
   }
 
   button.drop {
+    width: 100%;
+    min-height: 2.6rem;
     background: #ff6b4a;
-    font-size: 0.7rem;
-    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
   }
 
-  .debug {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.55rem;
-    font-weight: 800;
-  }
-
-  .debug label {
-    display: flex;
-    min-width: 0;
-    flex: 1;
-    align-items: center;
-    gap: 0.2rem;
-  }
-
-  .debug input {
-    min-width: 0;
-    flex: 1;
-    accent-color: #4f46e5;
-  }
-
-  button.magnet {
-    min-height: 1.5rem;
-    padding: 0 0.4rem;
-    font-size: 0.55rem;
-  }
-
-  button.magnet[aria-pressed='true'] {
-    background: #c7c3ff;
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
+  button.drop:hover:not(:disabled) {
+    background: #ff8466;
   }
 
   .shelf {
     display: flex;
-    min-height: 1.1rem;
+    min-height: 1.75rem;
+    box-sizing: border-box;
     flex-wrap: wrap;
-    gap: 0.15rem;
+    align-items: center;
+    gap: 0.2rem;
     margin: 0;
-    padding: 0;
+    padding: 0.2rem 0.3rem;
+    border: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
+    border-radius: 0.45rem;
     list-style: none;
+  }
+
+  .shelf li {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .shelf li.empty {
+    width: auto;
+    height: auto;
+    opacity: 0.7;
+    font-size: 0.66rem;
+    font-weight: 700;
   }
 
   .shelf img {
@@ -390,20 +412,49 @@
     height: 100%;
   }
 
-  .shelf li {
-    width: 1.05rem;
-    height: 1.05rem;
+  /* Narrow cards: shrink the pad so the machine keeps most of the width. */
+  @container (max-width: 22rem) {
+    .wishlist-game {
+      grid-template-columns: minmax(0, 1fr) minmax(7.25rem, auto);
+      gap: 0.5rem;
+      padding: 0.5rem;
+    }
+
+    .pad {
+      grid-template-columns: repeat(3, 2.2rem);
+      grid-template-rows: repeat(2, 2.2rem);
+      gap: 0.2rem;
+    }
+
+    button {
+      min-width: 2.2rem;
+      min-height: 2.2rem;
+    }
+
+    .status {
+      font-size: 0.68rem;
+    }
   }
 
   @keyframes pop {
     from {
       opacity: 0;
-      transform: translateY(8cqw) scale(0.2);
+      transform: translateY(0.5rem) scale(0.2);
     }
 
     to {
       opacity: 1;
       transform: translateY(0) scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal {
+      animation: none;
+    }
+
+    button {
+      transition: none;
     }
   }
 </style>

@@ -12,7 +12,7 @@ export type DropResult =
   { kind: 'busy' } | { kind: 'miss' } | { kind: 'slip' } | { kind: 'prize' };
 
 export type ClawScene = {
-  setDirection(direction: Vec2): void;
+  aimAt(clientX: number, clientY: number): void;
   nudge(direction: Vec2): void;
   drop(): Promise<DropResult>;
   reset(): void;
@@ -20,7 +20,11 @@ export type ClawScene = {
   dispose(): void;
 };
 
-type Options = { onPrize?: (prize: Prize) => void };
+type WallText = { title: string; lines: string[] };
+type Options = {
+  onPrize?: (prize: Prize) => void;
+  walls?: { back?: WallText; left?: WallText };
+};
 type Phase =
   'idle' | 'lowering' | 'closing' | 'raising' | 'carrying' | 'releasing';
 type Ball = {
@@ -41,6 +45,9 @@ const GRIP_CLOSED = -0.03;
 const FIXED_STEP = 1 / 60;
 const REVEAL_SECONDS = 2.6;
 const PIT_Y = -1;
+const VIEW_HALF = 5.2;
+// The claw aims at the point under the cursor at roughly ball-top height.
+const AIM_PLANE_Y = 1;
 // Every other drop gets a hidden magnet so the game stays winnable.
 // It only reaches balls just under the claw head and pulls harder than gravity.
 const ASSIST_FORCE = 1.6 * 28;
@@ -66,7 +73,7 @@ export function createClawScene(
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.OrthographicCamera(-5.6, 5.6, 5.6, -5.6, 0.1, 60);
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 60);
   camera.position.set(11, 9.5, 11);
   camera.lookAt(0, 1.7, 0);
 
@@ -183,15 +190,40 @@ export function createClawScene(
     [-2.25, -1.25, 2.25]
   );
 
+  // Walls carry the instructions, painted into the upper half above the balls.
+  function wallMaterial(color: string, text?: WallText) {
+    if (!text) return new THREE.MeshStandardMaterial({ color });
+    const surface = document.createElement('canvas');
+    surface.width = surface.height = 1024;
+    const context = surface.getContext('2d');
+    if (!context) return new THREE.MeshStandardMaterial({ color });
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1024, 1024);
+    context.fillStyle = INK;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.font = '900 112px system-ui, sans-serif';
+    context.fillText(text.title.toUpperCase(), 512, 200);
+    context.fillRect(382, 282, 260, 12);
+    context.font = '800 84px system-ui, sans-serif';
+    text.lines.forEach((line, index) => {
+      context.fillText(line, 512, 380 + index * 100);
+    });
+    const texture = track(new THREE.CanvasTexture(surface));
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    return new THREE.MeshStandardMaterial({ map: texture });
+  }
+
   const back = addMesh(
     new THREE.PlaneGeometry(6, 6),
-    new THREE.MeshStandardMaterial({ color: '#ffe3c4' }),
+    wallMaterial('#ffe3c4', options.walls?.back),
     [0, 3, -3]
   );
   back.receiveShadow = true;
   const left = addMesh(
     new THREE.PlaneGeometry(6, 6),
-    new THREE.MeshStandardMaterial({ color: '#f7c99c' }),
+    wallMaterial('#f7c99c', options.walls?.left),
     [-3, 3, 0]
   );
   left.rotation.y = Math.PI / 2;
@@ -459,10 +491,14 @@ export function createClawScene(
   function fillMachine() {
     for (const ball of [...balls]) removeBall(ball);
     balls = Array.from({ length: BALL_COUNT }, (_, i) => createBall(i));
-    for (let step = 0; step < 420; step += 1) world.step(1 / 60);
-    for (const ball of balls.filter((item) => item.body.position.y < PIT_Y)) {
-      removeBall(ball);
-    }
+    // Settle, then drop anything that rolled into or onto the chute so the
+    // machine never pays out a prize before the first drop.
+    for (let step = 0; step < 600; step += 1) world.step(1 / 60);
+    const overChute = (ball: Ball) =>
+      ball.body.position.y < PIT_Y ||
+      (ball.body.position.x < -1.5 + RADIUS &&
+        ball.body.position.z > 1.5 - RADIUS);
+    for (const ball of balls.filter(overChute)) removeBall(ball);
     balls.forEach(syncBall);
   }
 
@@ -490,7 +526,6 @@ export function createClawScene(
   let phaseTime = 0;
   const pos = { x: 0, z: 0 };
   const target = { x: 0, z: 0 };
-  let direction: Vec2 = { x: 0, z: 0 };
   let clawY = CLAW_MAX_Y;
   let grip = 0;
   let gripTarget = 0;
@@ -568,12 +603,6 @@ export function createClawScene(
   }
 
   function moveClaw(dt: number) {
-    const next = clampClaw({
-      x: target.x + direction.x * 2.6 * dt,
-      z: target.z + direction.z * 2.6 * dt
-    });
-    target.x = next.x;
-    target.z = next.z;
     const k = Math.min(1, dt * 9);
     pos.x += (target.x - pos.x) * k;
     pos.z += (target.z - pos.z) * k;
@@ -621,6 +650,11 @@ export function createClawScene(
         break;
       case 'lowering':
         gripTarget = 0;
+        // Finish travelling to the aimed spot before descending.
+        if (Math.hypot(target.x - pos.x, target.z - pos.z) > 0.03) {
+          moveClaw(dt);
+          break;
+        }
         clawY = Math.max(CLAW_MIN_Y, clawY - 4 * dt);
         if (clawY === CLAW_MIN_Y) setPhase('closing');
         break;
@@ -725,7 +759,23 @@ export function createClawScene(
     const width = parent.clientWidth || 300;
     const height = parent.clientHeight || width;
     renderer.setSize(width, height, false);
+    const aspect = width / height;
+    const halfX = aspect >= 1 ? VIEW_HALF * aspect : VIEW_HALF;
+    const halfY = aspect >= 1 ? VIEW_HALF : VIEW_HALF / aspect;
+    Object.assign(camera, {
+      left: -halfX,
+      right: halfX,
+      top: halfY,
+      bottom: -halfY
+    });
+    camera.updateProjectionMatrix();
+    if (!frameId) renderer.render(scene, camera);
   };
+
+  const raycaster = new THREE.Raycaster();
+  const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -AIM_PLANE_Y);
+  const pointer = new THREE.Vector2();
+  const hit = new THREE.Vector3();
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(parent);
   const visibility = new IntersectionObserver(([entry]) => {
@@ -739,14 +789,25 @@ export function createClawScene(
   renderer.render(scene, camera);
 
   return {
-    setDirection(next) {
-      direction = next;
+    aimAt(clientX, clientY) {
+      if (phase !== 'idle') return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      pointer.set(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(pointer, camera);
+      if (!raycaster.ray.intersectPlane(aimPlane, hit)) return;
+      const aimed = clampClaw({ x: hit.x, z: hit.z });
+      target.x = aimed.x;
+      target.z = aimed.z;
     },
     nudge(next) {
       if (phase !== 'idle') return;
       const moved = clampClaw({
-        x: target.x + next.x * 0.7,
-        z: target.z + next.z * 0.7
+        x: target.x + next.x * 0.3,
+        z: target.z + next.z * 0.3
       });
       target.x = moved.x;
       target.z = moved.z;
@@ -755,7 +816,6 @@ export function createClawScene(
       if (phase !== 'idle' || balls.length === 0) {
         return Promise.resolve<DropResult>({ kind: 'busy' });
       }
-      direction = { x: 0, z: 0 };
       lifted = false;
       won = false;
       attempts += 1;

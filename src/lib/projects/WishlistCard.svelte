@@ -1,12 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
   import type { ProjectCardVisualProps } from '$lib/types/projects';
   import { sumDirections, type ClawDirection } from './wishlistClaw';
   import { prizeLabels, prizeSrc, type Prize } from './wishlistPrizes';
   import type { ClawScene } from './wishlistScene';
-
-  const idleStatus = 'Hold the arrows to aim, then drop.';
 
   let { theme }: ProjectCardVisualProps = $props();
   let canvas = $state<HTMLCanvasElement>();
@@ -15,36 +12,58 @@
   let failed = $state(false);
   let busy = $state(false);
   let remaining = $state(0);
-  let status = $state('Loading the machine…');
+  let status = $state('');
   let opened = $state<Prize | null>(null);
   let collected = $state<Prize[]>([]);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const pressed = new SvelteSet<ClawDirection>();
   let soldOut = $derived(ready && remaining === 0);
-  let locked = $derived(busy || !ready);
+  // The play surface keeps focus while busy, so it is never `disabled`.
+  let locked = $derived(!ready || busy || soldOut);
+
+  function say(message: string) {
+    status = message;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      status = '';
+      opened = null;
+    }, 3200);
+  }
 
   onMount(() => {
     let disposed = false;
     const element = canvas;
     if (!element) return;
+    const touch = matchMedia('(hover: none)').matches;
 
     import('./wishlistScene')
       .then(({ createClawScene }) => {
         if (disposed) return;
         scene = createClawScene(element, {
-          onPrize: (prize) => win(prize)
+          onPrize: (prize) => win(prize),
+          walls: {
+            back: {
+              title: 'How to play',
+              lines: touch
+                ? ['Tap a ball', 'to grab it']
+                : ['Move to aim', 'Click to drop']
+            },
+            left: {
+              title: 'Wishlist',
+              lines: ['Every ball', 'hides a wish']
+            }
+          }
         });
         remaining = scene.remaining;
         ready = true;
-        status = idleStatus;
       })
       .catch(() => {
         failed = true;
-        status = 'The 3D machine is not supported on this device.';
       });
 
     return () => {
       disposed = true;
+      clearTimeout(toastTimer);
       scene?.dispose();
     };
   });
@@ -53,35 +72,30 @@
     opened = prize;
     collected = [...collected, prize];
     remaining = scene?.remaining ?? 0;
-    status = `The ball opens. It is ${prizeLabels[prize]}!`;
+    say(`It is ${prizeLabels[prize]}!`);
   }
 
-  function applyDirection() {
-    scene?.setDirection(sumDirections([...pressed]));
-  }
-
-  function press(direction: ClawDirection, event: PointerEvent) {
-    if (locked || event.button !== 0) return;
-    opened = null;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    pressed.add(direction);
-    applyDirection();
-  }
-
-  function release(direction: ClawDirection) {
-    if (!pressed.delete(direction)) return;
-    applyDirection();
-  }
-
-  function step(direction: ClawDirection) {
+  function aim(event: PointerEvent) {
     if (locked) return;
-    opened = null;
-    scene?.nudge(sumDirections([direction]));
+    scene?.aimAt(event.clientX, event.clientY);
   }
 
-  // Keyboard and assistive-technology activation arrives as a click without pointer detail.
-  function nudge(direction: ClawDirection, event: MouseEvent) {
-    if (event.detail === 0) step(direction);
+  async function drop(event: MouseEvent) {
+    if (!scene || locked) return;
+    // Pointer clicks drop where they land; keyboard activation drops in place.
+    if (event.detail !== 0) scene.aimAt(event.clientX, event.clientY);
+    opened = null;
+    busy = true;
+    status = 'Dropping…';
+    clearTimeout(toastTimer);
+    const result = await scene.drop();
+    busy = false;
+    remaining = scene.remaining;
+    if (result.kind === 'slip') say('So close — it slipped!');
+    else if (result.kind === 'miss') say('Nothing there. Try again.');
+    else if (result.kind === 'busy') status = '';
+    if (remaining === 0 && result.kind !== 'prize')
+      say('The machine is empty.');
   }
 
   const keyDirections: Record<string, ClawDirection> = {
@@ -91,29 +105,11 @@
     ArrowRight: 'right'
   };
 
-  // Arrow keys steer while any pad button has focus.
-  function onPadKey(event: KeyboardEvent) {
+  function onKey(event: KeyboardEvent) {
     const direction = keyDirections[event.key];
     if (!direction) return;
     event.preventDefault();
-    step(direction);
-  }
-
-  async function drop() {
-    if (!scene || busy) return;
-    pressed.clear();
-    applyDirection();
-    opened = null;
-    busy = true;
-    status = 'Dropping…';
-    const result = await scene.drop();
-    busy = false;
-    if (result.kind === 'slip') status = 'So close — it slipped! Try again.';
-    else if (result.kind === 'miss')
-      status = 'Nothing there. Try another spot.';
-    remaining = scene.remaining;
-    if (remaining === 0 && result.kind !== 'prize')
-      status = 'The machine is empty.';
+    if (!locked) scene?.nudge(sumDirections([direction]));
   }
 
   function reset() {
@@ -122,16 +118,9 @@
     remaining = scene.remaining;
     collected = [];
     opened = null;
-    status = idleStatus;
+    status = '';
+    clearTimeout(toastTimer);
   }
-
-  const controls: { direction: ClawDirection; label: string; arrow: string }[] =
-    [
-      { direction: 'back', label: 'Move claw back', arrow: '▲' },
-      { direction: 'left', label: 'Move claw left', arrow: '◀' },
-      { direction: 'front', label: 'Move claw forward', arrow: '▼' },
-      { direction: 'right', label: 'Move claw right', arrow: '▶' }
-    ];
 </script>
 
 <div
@@ -140,253 +129,238 @@
   style:--ink={theme.foreground}
   style:--card-accent={theme.accent}
 >
-  <div
-    class="field"
-    class:failed
-    role="img"
-    aria-label="3D claw machine filled with prize balls"
+  <canvas bind:this={canvas} class:hidden={failed} aria-hidden="true"></canvas>
+
+  <button
+    type="button"
+    class="play"
+    aria-label={soldOut ? 'Claw machine, empty' : 'Drop the claw'}
+    aria-describedby="wishlist-help"
+    aria-disabled={locked}
+    onpointermove={aim}
+    onpointerdown={aim}
+    onclick={drop}
+    onkeydown={onKey}
+  ></button>
+  <span id="wishlist-help" class="sr-only">
+    Claw machine with {remaining} prize balls. Point to aim or use the arrow keys,
+    then click or press Enter to drop the claw.
+  </span>
+
+  <button
+    type="button"
+    class="restart"
+    class:wide={soldOut}
+    aria-label="Refill the machine"
+    disabled={!ready || busy}
+    onclick={reset}
   >
-    <canvas bind:this={canvas} aria-hidden="true"></canvas>
-  </div>
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+    {#if soldOut}<span aria-hidden="true">Play again</span>{/if}
+  </button>
 
-  <div class="console">
-    <p class="status" role="status" aria-live="polite">
-      {#if opened}
-        <img class="reveal" src={prizeSrc(opened)} alt="" />
-      {/if}
-      <span>{status}</span>
-    </p>
-
-    <div class="pad" role="group" aria-label="Move claw">
-      {#each controls as { direction, label, arrow } (direction)}
-        <button
-          type="button"
-          class="pad-{direction}"
-          class:held={pressed.has(direction)}
-          aria-label={label}
-          disabled={locked}
-          onpointerdown={(event) => press(direction, event)}
-          onpointerup={() => release(direction)}
-          onpointercancel={() => release(direction)}
-          onlostpointercapture={() => release(direction)}
-          onclick={(event) => nudge(direction, event)}
-          onkeydown={onPadKey}><span aria-hidden="true">{arrow}</span></button
-        >
-      {/each}
-    </div>
-
-    {#if soldOut}
-      <button type="button" class="drop" disabled={busy} onclick={reset}
-        >Play again</button
-      >
-    {:else}
-      <button type="button" class="drop" disabled={locked} onclick={drop}
-        >{busy ? 'Grabbing…' : 'Drop'}</button
-      >
+  <p class="toast" class:shown={status || !ready} role="status">
+    {#if opened}
+      <img class="reveal" src={prizeSrc(opened)} alt="" />
     {/if}
+    {#if failed}
+      The 3D machine is not supported on this device.
+    {:else if !ready}
+      Loading the machine…
+    {:else}
+      {status}
+    {/if}
+  </p>
 
+  {#if collected.length}
     <ul class="shelf" aria-label="Collected prizes">
       {#each collected as prize, index (index)}
         <li title={prizeLabels[prize]}>
           <img src={prizeSrc(prize)} alt={prizeLabels[prize]} />
         </li>
-      {:else}
-        <li class="empty">Prizes land here</li>
       {/each}
     </ul>
-  </div>
+  {/if}
 </div>
 
 <style>
   .wishlist-game {
     --paper: #fff4e6;
-    --press: 0.2rem;
-    display: grid;
+    position: relative;
     height: 100%;
     min-height: 15rem;
     box-sizing: border-box;
-    grid-template-columns: minmax(0, 1.15fr) minmax(8.5rem, 0.85fr);
-    gap: 0.7rem;
-    padding: 0.7rem;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
     border-radius: 0.65rem;
     background:
-      radial-gradient(circle at 0 0, rgb(255 255 255 / 60%), transparent 40%),
-      var(--card-background);
+      radial-gradient(circle at 20% 0, rgb(255 255 255 / 65%), transparent 55%),
+      linear-gradient(160deg, #fff0dc, var(--card-background));
     color: var(--ink);
-    container-type: inline-size;
-  }
-
-  .field {
-    position: relative;
-    width: 100%;
-    max-height: 100%;
-    aspect-ratio: 1;
-    align-self: center;
-    justify-self: center;
-    overflow: hidden;
-    border-radius: 0.55rem;
-    background: linear-gradient(160deg, #fff0dc, #ffc89a);
-    box-shadow:
-      inset 0 0 0 2px var(--ink),
-      0 0.25rem 0 var(--ink);
-  }
-
-  .field.failed canvas {
-    visibility: hidden;
   }
 
   canvas {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
   }
 
-  .console {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 0.55rem;
+  canvas.hidden {
+    visibility: hidden;
   }
 
-  .status {
-    display: flex;
-    min-height: 3.2em;
+  /* Transparent hit area over the canvas: the pointer aims, a click drops. */
+  .play {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    cursor: crosshair;
+    /* Vertical swipes still scroll the page on touch screens. */
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .play[aria-disabled='true'] {
+    cursor: progress;
+  }
+
+  .play:focus-visible {
+    outline: 3px solid var(--card-accent);
+    outline-offset: -3px;
+  }
+
+  .restart {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    display: inline-flex;
+    height: 2.4rem;
+    min-width: 2.4rem;
+    box-sizing: border-box;
     align-items: center;
-    gap: 0.35rem;
-    margin: 0;
-    padding: 0.4rem 0.5rem;
-    border: 2px solid var(--ink);
-    border-radius: 0.45rem;
-    background: var(--paper);
-    font-size: 0.74rem;
-    font-weight: 750;
-    line-height: 1.3;
-    text-wrap: pretty;
-  }
-
-  .reveal {
-    width: 1.6rem;
-    height: 1.6rem;
-    flex-shrink: 0;
-    animation: pop 0.8s cubic-bezier(0.3, 1.5, 0.5, 1) both;
-  }
-
-  .pad {
-    display: grid;
-    grid-template-columns: repeat(3, 2.5rem);
-    grid-template-rows: repeat(2, 2.5rem);
-    gap: 0.3rem;
     justify-content: center;
-  }
-
-  .pad-back {
-    grid-column: 2;
-  }
-
-  .pad-left {
-    grid-row: 2;
-    grid-column: 1;
-  }
-
-  .pad-front {
-    grid-row: 2;
-    grid-column: 2;
-  }
-
-  .pad-right {
-    grid-row: 2;
-    grid-column: 3;
-  }
-
-  button {
-    display: grid;
-    min-width: 2.5rem;
-    min-height: 2.5rem;
-    margin: 0;
-    place-items: center;
+    gap: 0.35rem;
+    padding: 0 0.55rem;
     border: 2px solid var(--ink);
-    border-radius: 0.5rem;
+    border-radius: 999px;
     background: var(--paper);
-    box-shadow: 0 var(--press) 0 var(--ink);
+    box-shadow: 0 0.18rem 0 var(--ink);
     color: var(--ink);
     cursor: pointer;
     font: inherit;
-    font-size: 0.85rem;
-    font-weight: 900;
-    touch-action: manipulation;
+    font-size: 0.75rem;
+    font-weight: 850;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     transition:
       transform 80ms ease,
       box-shadow 80ms ease,
       background-color 120ms ease;
-    -webkit-tap-highlight-color: transparent;
   }
 
-  button:hover:not(:disabled) {
+  .restart svg {
+    width: 1.05rem;
+    height: 1.05rem;
+  }
+
+  .restart.wide {
+    background: #ff6b4a;
+  }
+
+  .restart:hover:not(:disabled) {
     background: #fff;
   }
 
-  button:active:not(:disabled),
-  button.held {
+  .restart:active:not(:disabled) {
     box-shadow: 0 0 0 var(--ink);
-    transform: translateY(var(--press));
+    transform: translateY(0.18rem);
   }
 
-  button:focus-visible {
+  .restart:focus-visible {
     outline: 3px solid var(--card-accent);
     outline-offset: 2px;
   }
 
-  button:disabled {
+  .restart:disabled {
     cursor: not-allowed;
     opacity: 0.45;
   }
 
-  .pad button {
-    touch-action: none;
-    user-select: none;
+  .toast {
+    position: absolute;
+    bottom: 0.6rem;
+    left: 50%;
+    display: flex;
+    max-width: calc(100% - 1.2rem);
+    box-sizing: border-box;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0.35rem 0.75rem;
+    border: 2px solid var(--ink);
+    border-radius: 999px;
+    background: var(--paper);
+    font-size: 0.78rem;
+    font-weight: 800;
+    line-height: 1.25;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 0.4rem);
+    transition:
+      opacity 180ms ease,
+      transform 180ms ease;
+    white-space: nowrap;
   }
 
-  button.drop {
-    width: 100%;
-    min-height: 2.6rem;
-    background: #ff6b4a;
-    font-size: 0.8rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+  .toast.shown {
+    opacity: 1;
+    transform: translate(-50%, 0);
   }
 
-  button.drop:hover:not(:disabled) {
-    background: #ff8466;
+  .reveal {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+    animation: pop 0.8s cubic-bezier(0.3, 1.5, 0.5, 1) both;
   }
 
   .shelf {
+    position: absolute;
+    top: 0.6rem;
+    left: 0.6rem;
     display: flex;
-    min-height: 1.75rem;
-    box-sizing: border-box;
+    max-width: calc(100% - 4rem);
     flex-wrap: wrap;
-    align-items: center;
     gap: 0.2rem;
     margin: 0;
-    padding: 0.2rem 0.3rem;
-    border: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
-    border-radius: 0.45rem;
+    padding: 0.2rem 0.35rem;
+    border: 2px solid var(--ink);
+    border-radius: 999px;
+    background: var(--paper);
     list-style: none;
+    pointer-events: none;
   }
 
   .shelf li {
-    width: 1.25rem;
-    height: 1.25rem;
-  }
-
-  .shelf li.empty {
-    width: auto;
-    height: auto;
-    opacity: 0.7;
-    font-size: 0.66rem;
-    font-weight: 700;
+    width: 1.3rem;
+    height: 1.3rem;
   }
 
   .shelf img {
@@ -395,28 +369,13 @@
     height: 100%;
   }
 
-  /* Narrow cards: shrink the pad so the machine keeps most of the width. */
-  @container (max-width: 22rem) {
-    .wishlist-game {
-      grid-template-columns: minmax(0, 1fr) minmax(7.25rem, auto);
-      gap: 0.5rem;
-      padding: 0.5rem;
-    }
-
-    .pad {
-      grid-template-columns: repeat(3, 2.2rem);
-      grid-template-rows: repeat(2, 2.2rem);
-      gap: 0.2rem;
-    }
-
-    button {
-      min-width: 2.2rem;
-      min-height: 2.2rem;
-    }
-
-    .status {
-      font-size: 0.68rem;
-    }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   @keyframes pop {
@@ -436,7 +395,8 @@
       animation: none;
     }
 
-    button {
+    .restart,
+    .toast {
       transition: none;
     }
   }

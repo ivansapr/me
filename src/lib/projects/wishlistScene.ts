@@ -1,9 +1,9 @@
 import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
 import {
-  chutePosition,
   clampClaw,
   isOverChute,
+  type ClawBounds,
   type Vec2
 } from './wishlistClaw';
 import { prizeSrc, prizes, type Prize } from './wishlistPrizes';
@@ -23,7 +23,7 @@ export type ClawScene = {
 type WallText = { title: string; lines: string[] };
 type Options = {
   onPrize?: (prize: Prize) => void;
-  walls?: { back?: WallText; left?: WallText };
+  wall?: WallText;
 };
 type Phase =
   'idle' | 'lowering' | 'closing' | 'raising' | 'carrying' | 'releasing';
@@ -37,15 +37,23 @@ type Ball = {
 const INK = '#3b1d0f';
 const BALL_COLORS = ['#ff6b4a', '#ffc247', '#4fb6a8', '#7b6cf6'];
 const RADIUS = 0.5;
-const BALL_COUNT = 14;
+const BALL_COUNT = 18;
 const CLAW_MIN_Y = 1.35;
-const CLAW_MAX_Y = 5.2;
+const CLAW_MAX_Y = 3.6;
 const GRIP_OPEN = 0.5;
 const GRIP_CLOSED = -0.03;
 const FIXED_STEP = 1 / 60;
 const REVEAL_SECONDS = 2.6;
 const PIT_Y = -1;
-const VIEW_HALF = 5.2;
+// The field fills the whole card: a floor running edge to edge with a back
+// wall across the top. Width is fixed in world units; depth follows the card.
+const FIELD_HALF_X = 4.4;
+const TILT = (55 * Math.PI) / 180;
+const WALL_SHARE = 0.28;
+const CHUTE = 1.6;
+const CLAW_MARGIN = 0.6;
+const FLOOR_COLOR = '#f6b787';
+const WALL_COLOR = '#ffe3c4';
 // The claw aims at the point under the cursor at roughly ball-top height.
 const AIM_PLANE_Y = 1;
 // Every other drop gets a hidden magnet so the game stays winnable.
@@ -73,20 +81,33 @@ export function createClawScene(
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 60);
-  camera.position.set(11, 9.5, 11);
-  camera.lookAt(0, 1.7, 0);
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 80);
+  const startAspect =
+    (canvas.clientWidth || 300) / (canvas.clientHeight || 240);
+  const viewHalfY = FIELD_HALF_X / startAspect;
+  // Floor depth and visible wall height that fill the card at this aspect.
+  const depth = ((1 - WALL_SHARE) * 2 * viewHalfY) / Math.sin(TILT);
+  const wallHeight = (WALL_SHARE * 2 * viewHalfY) / Math.cos(TILT);
+  const halfZ = depth / 2;
+  const bounds: ClawBounds = {
+    x: FIELD_HALF_X - CLAW_MARGIN,
+    z: halfZ - CLAW_MARGIN
+  };
+  const chute: Vec2 = {
+    x: -FIELD_HALF_X + CHUTE / 2,
+    z: halfZ - CHUTE / 2
+  };
 
   scene.add(new THREE.HemisphereLight('#fff3e2', '#c98a5a', 1.5));
   const sun = new THREE.DirectionalLight('#ffffff', 2.2);
-  sun.position.set(6, 12, 8);
+  sun.position.set(4, 12, 7);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   Object.assign(sun.shadow.camera, {
-    left: -6,
-    right: 6,
-    top: 6,
-    bottom: -6,
+    left: -8,
+    right: 8,
+    top: 8,
+    bottom: -8,
     near: 1,
     far: 40
   });
@@ -123,14 +144,21 @@ export function createClawScene(
     world.addBody(body);
   }
 
-  // The floor has a corner hole (the chute) over a pit.
-  addStaticBox([3, 0.5, 2.25], [0, -0.5, -0.75]);
-  addStaticBox([2.25, 0.5, 0.75], [0.75, -0.5, 2.25]);
-  addStaticBox([3, 0.5, 3], [0, -3, 0]);
-  addStaticBox([3.5, 5, 0.5], [0, 1, -3.5]);
-  addStaticBox([3.5, 5, 0.5], [0, 1, 3.5]);
-  addStaticBox([0.5, 5, 3.5], [-3.5, 1, 0]);
-  addStaticBox([0.5, 5, 3.5], [3.5, 1, 0]);
+  // The floor has a hole in the front-left corner (the chute) over a pit.
+  // Invisible walls sit on the card edges so balls stay in view.
+  const W = FIELD_HALF_X;
+  const Z = halfZ;
+  addStaticBox([W, 0.5, Z - CHUTE / 2], [0, -0.5, -CHUTE / 2]);
+  addStaticBox(
+    [W - CHUTE / 2, 0.5, CHUTE / 2],
+    [CHUTE / 2, -0.5, Z - CHUTE / 2]
+  );
+  addStaticBox([W, 0.5, Z], [0, -3, 0]);
+  addStaticBox([W + 1, 6, 0.5], [0, 4, -Z - 0.5]);
+  addStaticBox([W + 1, 6, 0.5], [0, 4, Z + 0.5]);
+  // Side walls sit a touch inside the edges so no ball is cut in half.
+  addStaticBox([0.5, 6, Z + 1], [-W + 0.1 - 0.5, 4, 0]);
+  addStaticBox([0.5, 6, Z + 1], [W - 0.1 + 0.5, 4, 0]);
 
   const disposables: { dispose(): void }[] = [];
   const track = <T extends { dispose(): void }>(item: T) => {
@@ -150,118 +178,109 @@ export function createClawScene(
     return mesh;
   }
 
-  const lineMaterial = track(new THREE.LineBasicMaterial({ color: INK }));
-  function addOutline(
-    geometry: THREE.BufferGeometry,
-    at: [number, number, number]
-  ) {
-    const edges = track(new THREE.EdgesGeometry(geometry));
-    const lines = new THREE.LineSegments(edges, lineMaterial);
-    lines.position.set(...at);
-    scene.add(lines);
-    track(geometry);
-  }
-
+  // Visible floor and wall run well past the card edges, so nothing but the
+  // field is ever on screen even when the card is resized.
+  const FAR = 40;
   const floorMaterial = track(
-    new THREE.MeshStandardMaterial({ color: '#e59a62' })
+    new THREE.MeshStandardMaterial({ color: FLOOR_COLOR })
   );
-  for (const [size, at] of [
-    [
-      [6, 2.5, 4.5],
-      [0, -1.25, -0.75]
-    ],
-    [
-      [4.5, 2.5, 1.5],
-      [0.75, -1.25, 2.25]
-    ]
-  ] as const) {
+  for (const [x0, x1, z0, z1] of [
+    [-FAR, FAR, -Z, Z - CHUTE],
+    [-W + CHUTE, FAR, Z - CHUTE, FAR]
+  ]) {
     const floor = new THREE.Mesh(
-      track(new THREE.BoxGeometry(...size)),
+      track(new THREE.BoxGeometry(x1 - x0, 2.5, z1 - z0)),
       floorMaterial
     );
-    floor.position.set(at[0], at[1], at[2]);
+    floor.position.set((x0 + x1) / 2, -1.25, (z0 + z1) / 2);
     floor.receiveShadow = true;
     scene.add(floor);
-    addOutline(new THREE.BoxGeometry(...size), [...at]);
   }
   addMesh(
-    new THREE.BoxGeometry(1.5, 2.5, 1.5),
+    new THREE.BoxGeometry(CHUTE + 10, 2.5, CHUTE + 10),
     new THREE.MeshStandardMaterial({ color: '#7a3a1c', side: THREE.BackSide }),
-    [-2.25, -1.25, 2.25]
+    [-W + CHUTE / 2 - 5, -1.25, Z - CHUTE / 2 + 5]
   );
-
-  // Walls carry the instructions, painted into the upper half above the balls.
-  function wallMaterial(color: string, text?: WallText) {
-    if (!text) return new THREE.MeshStandardMaterial({ color });
-    const surface = document.createElement('canvas');
-    surface.width = surface.height = 1024;
-    const context = surface.getContext('2d');
-    if (!context) return new THREE.MeshStandardMaterial({ color });
-    context.fillStyle = color;
-    context.fillRect(0, 0, 1024, 1024);
-    context.fillStyle = INK;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.font = '900 112px system-ui, sans-serif';
-    context.fillText(text.title.toUpperCase(), 512, 200);
-    context.fillRect(382, 282, 260, 12);
-    context.font = '800 84px system-ui, sans-serif';
-    text.lines.forEach((line, index) => {
-      context.fillText(line, 512, 380 + index * 100);
-    });
-    const texture = track(new THREE.CanvasTexture(surface));
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    return new THREE.MeshStandardMaterial({ map: texture });
+  // A soft line where the chute starts reads as its lip.
+  const lipMaterial = track(new THREE.MeshBasicMaterial({ color: INK }));
+  for (const [sx, sz, x, z] of [
+    [0.06, CHUTE, -W + CHUTE, Z - CHUTE / 2],
+    [CHUTE, 0.06, -W + CHUTE / 2, Z - CHUTE]
+  ]) {
+    const lip = new THREE.Mesh(
+      track(new THREE.BoxGeometry(sx, 0.02, sz)),
+      lipMaterial
+    );
+    lip.position.set(x, 0.01, z);
+    scene.add(lip);
   }
 
-  const back = addMesh(
-    new THREE.PlaneGeometry(6, 6),
-    wallMaterial('#ffe3c4', options.walls?.back),
-    [0, 3, -3]
+  const wall = addMesh(
+    new THREE.PlaneGeometry(FAR * 2, FAR),
+    new THREE.MeshStandardMaterial({ color: WALL_COLOR }),
+    [0, FAR / 2, -Z]
   );
-  back.receiveShadow = true;
-  const left = addMesh(
-    new THREE.PlaneGeometry(6, 6),
-    wallMaterial('#f7c99c', options.walls?.left),
-    [-3, 3, 0]
-  );
-  left.rotation.y = Math.PI / 2;
-  left.receiveShadow = true;
-
-  const glassMaterial = track(
-    new THREE.MeshPhysicalMaterial({
-      color: '#ffffff',
-      transparent: true,
-      opacity: 0.13,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    })
-  );
-  const front = new THREE.Mesh(
-    track(new THREE.PlaneGeometry(6, 6)),
-    glassMaterial
-  );
-  front.position.set(0, 3, 3);
-  const right = front.clone();
-  right.position.set(3, 3, 0);
-  right.rotation.y = Math.PI / 2;
-  scene.add(front, right);
-  addOutline(new THREE.BoxGeometry(6, 6, 6), [0, 3, 0]);
-
-  // Chute marker on the floor corner.
+  wall.receiveShadow = true;
+  // Skirting line where the floor meets the wall.
   addMesh(
-    new THREE.BoxGeometry(1.5, 0.04, 1.5),
-    new THREE.MeshBasicMaterial({ color: '#8a3a1c' }),
-    [-2.25, 0.02, 2.25]
-  ).visible = false;
-
-  // Claw rig.
-  const trolley = addMesh(
-    new THREE.BoxGeometry(0.9, 0.3, 0.9),
-    new THREE.MeshStandardMaterial({ color: INK }),
-    [0, 6, 0]
+    new THREE.BoxGeometry(FAR * 2, 0.08, 0.04),
+    new THREE.MeshBasicMaterial({ color: INK }),
+    [0, 0.04, -Z + 0.02]
   );
+
+  // The instructions are painted on the back wall above the balls.
+  if (options.wall) {
+    const textWidth = 2 * W;
+    const textHeight = Math.max(1.6, wallHeight - 1.2);
+    const surface = document.createElement('canvas');
+    surface.width = 1024;
+    surface.height = Math.round((1024 * textHeight) / textWidth);
+    const context = surface.getContext('2d');
+    if (context) {
+      const unit = surface.height / 4;
+      // Keep clear of the refill button in the card's top-right corner.
+      const maxWidth = surface.width * 0.68;
+      const fitText = (
+        text: string,
+        weight: number,
+        size: number,
+        y: number
+      ) => {
+        let px = Math.round(size);
+        do {
+          context.font = `${weight} ${px}px system-ui, sans-serif`;
+          px -= 2;
+        } while (px > 12 && context.measureText(text).width > maxWidth);
+        context.fillText(text, surface.width * 0.47, y);
+      };
+      context.fillStyle = INK;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      fitText(
+        options.wall.title.toUpperCase(),
+        900,
+        unit * 0.95,
+        surface.height * 0.32
+      );
+      fitText(
+        options.wall.lines.join('  ·  '),
+        700,
+        unit * 0.62,
+        surface.height * 0.68
+      );
+      const texture = track(new THREE.CanvasTexture(surface));
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 4;
+      addMesh(
+        new THREE.PlaneGeometry(textWidth, textHeight),
+        new THREE.MeshBasicMaterial({ map: texture, transparent: true }),
+        [0, wallHeight - textHeight / 2 - 0.25, -Z + 0.01]
+      );
+    }
+  }
+
+  // Claw rig: the cable hangs from above the card.
+  const CABLE_TOP = 30;
   const cable = addMesh(
     new THREE.CylinderGeometry(0.05, 0.05, 1, 8),
     new THREE.MeshStandardMaterial({ color: INK }),
@@ -442,11 +461,11 @@ export function createClawScene(
       angularDamping: 0.35,
       allowSleep: true
     });
-    const layer = Math.floor(index / 4);
+    const layer = Math.floor(index / 6);
     for (;;) {
-      const x = (Math.random() * 2 - 1) * 2.3;
-      const z = (Math.random() * 2 - 1) * 2.3;
-      if (x < -0.4 && z > 0.4) continue;
+      const x = (Math.random() * 2 - 1) * bounds.x;
+      const z = (Math.random() * 2 - 1) * bounds.z;
+      if (x < chute.x + CHUTE && z > chute.z - CHUTE) continue;
       body.position.set(x, 0.6 + layer * 1.1 + Math.random() * 0.2, z);
       break;
     }
@@ -496,8 +515,8 @@ export function createClawScene(
     for (let step = 0; step < 600; step += 1) world.step(1 / 60);
     const overChute = (ball: Ball) =>
       ball.body.position.y < PIT_Y ||
-      (ball.body.position.x < -1.5 + RADIUS &&
-        ball.body.position.z > 1.5 - RADIUS);
+      (ball.body.position.x < -W + CHUTE + RADIUS &&
+        ball.body.position.z > Z - CHUTE - RADIUS);
     for (const ball of balls.filter(overChute)) removeBall(ball);
     balls.forEach(syncBall);
   }
@@ -673,8 +692,8 @@ export function createClawScene(
         break;
       case 'carrying': {
         gripTarget = 1;
-        const dx = chutePosition.x - pos.x;
-        const dz = chutePosition.z - pos.z;
+        const dx = chute.x - pos.x;
+        const dz = chute.z - pos.z;
         const distance = Math.hypot(dx, dz);
         const step = Math.min(distance, 2.6 * dt);
         if (distance > 0) {
@@ -683,7 +702,7 @@ export function createClawScene(
         }
         target.x = pos.x;
         target.z = pos.z;
-        if (isOverChute(pos, 0.02)) setPhase('releasing');
+        if (isOverChute(pos, chute, 0.02)) setPhase('releasing');
         break;
       }
       case 'releasing':
@@ -718,9 +737,8 @@ export function createClawScene(
     clawGroup.position.set(pos.x, clawY, pos.z);
     const angle = GRIP_OPEN + (GRIP_CLOSED - GRIP_OPEN) * grip;
     for (const pivot of pivots) pivot.rotation.z = angle;
-    trolley.position.set(pos.x, 6, pos.z);
-    cable.position.set(pos.x, (6 + clawY) / 2, pos.z);
-    cable.scale.y = 6 - clawY;
+    cable.position.set(pos.x, (CABLE_TOP + clawY) / 2, pos.z);
+    cable.scale.y = CABLE_TOP - clawY;
     driveClawBodies(dt);
     applyAssist();
   }
@@ -759,15 +777,18 @@ export function createClawScene(
     const width = parent.clientWidth || 300;
     const height = parent.clientHeight || width;
     renderer.setSize(width, height, false);
-    const aspect = width / height;
-    const halfX = aspect >= 1 ? VIEW_HALF * aspect : VIEW_HALF;
-    const halfY = aspect >= 1 ? VIEW_HALF : VIEW_HALF / aspect;
+    // Fit the field's width and pin the front edge of the floor to the
+    // bottom of the card; the wall fills whatever height is left on top.
+    const halfY = FIELD_HALF_X / (width / height);
+    const lookY = (halfY - halfZ * Math.sin(TILT)) / Math.cos(TILT);
     Object.assign(camera, {
-      left: -halfX,
-      right: halfX,
+      left: -FIELD_HALF_X,
+      right: FIELD_HALF_X,
       top: halfY,
       bottom: -halfY
     });
+    camera.position.set(0, lookY + 30 * Math.sin(TILT), 30 * Math.cos(TILT));
+    camera.lookAt(0, lookY, 0);
     camera.updateProjectionMatrix();
     if (!frameId) renderer.render(scene, camera);
   };
@@ -799,16 +820,16 @@ export function createClawScene(
       );
       raycaster.setFromCamera(pointer, camera);
       if (!raycaster.ray.intersectPlane(aimPlane, hit)) return;
-      const aimed = clampClaw({ x: hit.x, z: hit.z });
+      const aimed = clampClaw({ x: hit.x, z: hit.z }, bounds);
       target.x = aimed.x;
       target.z = aimed.z;
     },
     nudge(next) {
       if (phase !== 'idle') return;
-      const moved = clampClaw({
-        x: target.x + next.x * 0.3,
-        z: target.z + next.z * 0.3
-      });
+      const moved = clampClaw(
+        { x: target.x + next.x * 0.3, z: target.z + next.z * 0.3 },
+        bounds
+      );
       target.x = moved.x;
       target.z = moved.z;
     },

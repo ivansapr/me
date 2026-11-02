@@ -1,21 +1,20 @@
 export type Vec2 = { x: number; z: number };
 export type ClawDirection = 'left' | 'right' | 'back' | 'front';
 
-export const clawLimit = 2.55;
-export const chutePosition: Vec2 = { x: -2.25, z: 2.25 };
+/** Half extents the claw may travel to, centred on the field origin. */
+export type ClawBounds = { x: number; z: number };
 
-const s = Math.SQRT1_2;
-
-// Directions are relative to the isometric camera looking from (+x, +z).
+// The camera faces the field from the front (+z), so screen axes map
+// straight onto world x (right) and z (towards the viewer).
 const directions: Record<ClawDirection, Vec2> = {
-  right: { x: s, z: -s },
-  left: { x: -s, z: s },
-  back: { x: -s, z: -s },
-  front: { x: s, z: s }
+  right: { x: 1, z: 0 },
+  left: { x: -1, z: 0 },
+  back: { x: 0, z: -1 },
+  front: { x: 0, z: 1 }
 };
 
-const clamp = (value: number) =>
-  Math.min(clawLimit, Math.max(-clawLimit, value));
+const clamp = (value: number, limit: number) =>
+  Math.min(limit, Math.max(-limit, value));
 
 export function sumDirections(active: readonly ClawDirection[]): Vec2 {
   const sum = { x: 0, z: 0 };
@@ -26,13 +25,14 @@ export function sumDirections(active: readonly ClawDirection[]): Vec2 {
   return sum;
 }
 
-export function clampClaw(position: Vec2): Vec2 {
-  return { x: clamp(position.x), z: clamp(position.z) };
+export function clampClaw(position: Vec2, bounds: ClawBounds): Vec2 {
+  return { x: clamp(position.x, bounds.x), z: clamp(position.z, bounds.z) };
 }
 
-export function isOverChute(position: Vec2, tolerance = 0.1): boolean {
-  return (
-    Math.hypot(position.x - chutePosition.x, position.z - chutePosition.z) <=
-    tolerance
-  );
+export function isOverChute(
+  position: Vec2,
+  chute: Vec2,
+  tolerance = 0.1
+): boolean {
+  return Math.hypot(position.x - chute.x, position.z - chute.z) <= tolerance;
 }

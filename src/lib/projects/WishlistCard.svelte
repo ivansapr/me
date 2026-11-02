@@ -41,17 +41,11 @@
         if (disposed) return;
         scene = createClawScene(element, {
           onPrize: (prize) => win(prize),
-          walls: {
-            back: {
-              title: 'How to play',
-              lines: touch
-                ? ['Tap a ball', 'to grab it']
-                : ['Move to aim', 'Click to drop']
-            },
-            left: {
-              title: 'Wishlist',
-              lines: ['Every ball', 'hides a wish']
-            }
+          wall: {
+            title: 'Every ball hides a wish',
+            lines: touch
+              ? ['Tap a ball to grab it']
+              : ['Move to aim', 'Click to drop']
           }
         });
         remaining = scene.remaining;
@@ -193,18 +187,19 @@
 </div>
 
 <style>
+  /* The field bleeds over ProjectCard's 0.65rem visual padding so the whole
+     card area is the play field; the card's own rounded corners clip it. */
   .wishlist-game {
     --paper: #fff4e6;
+    --bleed: 0.65rem;
     position: relative;
-    height: 100%;
+    height: calc(100% + 2 * var(--bleed));
     min-height: 15rem;
     box-sizing: border-box;
+    margin: calc(-1 * var(--bleed));
     overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
-    border-radius: 0.65rem;
-    background:
-      radial-gradient(circle at 20% 0, rgb(255 255 255 / 65%), transparent 55%),
-      linear-gradient(160deg, #fff0dc, var(--card-background));
+    border-bottom: 1px solid var(--ink);
+    background: #f6b787;
     color: var(--ink);
   }
 
@@ -229,7 +224,6 @@
     margin: 0;
     padding: 0;
     border: 0;
-    border-radius: inherit;
     background: transparent;
     cursor: crosshair;
     /* Vertical swipes still scroll the page on touch screens. */

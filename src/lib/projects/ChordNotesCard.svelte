@@ -37,7 +37,9 @@
     { note: 'B4', frequency: 493.88 }
   ];
   const keyByNote = new Map(
-    keys.flatMap((key) => [key, ...(key.blackKey ? [key.blackKey] : [])]).map((key) => [key.note, key])
+    keys
+      .flatMap((key) => [key, ...(key.blackKey ? [key.blackKey] : [])])
+      .map((key) => [key.note, key])
   );
 
   let { theme }: ProjectCardVisualProps = $props();
@@ -79,7 +81,9 @@
     activePointerId = event.pointerId;
     lastPlayedNote = key.note;
     pressedNote = key.note;
-    (event.currentTarget as HTMLButtonElement).setPointerCapture(event.pointerId);
+    (event.currentTarget as HTMLButtonElement).setPointerCapture(
+      event.pointerId
+    );
     playNote(key);
   }
 
@@ -134,7 +138,10 @@
         </button>
         {#if key.blackKey}
           <button
-            class={['black-key', { 'is-pressed': pressedNote === key.blackKey.note }]}
+            class={[
+              'black-key',
+              { 'is-pressed': pressedNote === key.blackKey.note }
+            ]}
             type="button"
             aria-label={`Play ${key.blackKey.note}`}
             data-note={key.blackKey.note}
@@ -161,9 +168,15 @@
     border-radius: 0.65rem;
     background:
       linear-gradient(110deg, rgb(255 255 255 / 30%), transparent 24%),
-      repeating-linear-gradient(92deg, rgb(255 255 255 / 8%) 0 1px, transparent 1px 5px),
+      repeating-linear-gradient(
+        92deg,
+        rgb(255 255 255 / 8%) 0 1px,
+        transparent 1px 5px
+      ),
       var(--card-background);
-    box-shadow: inset 0 1px rgb(255 255 255 / 65%), inset 0 -0.35rem 0 rgb(0 0 0 / 12%);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 65%),
+      inset 0 -0.35rem 0 rgb(0 0 0 / 12%);
     color: var(--card-accent);
   }
 
@@ -173,7 +186,9 @@
     border: 0.3rem solid #252525;
     border-radius: 0.42rem;
     background: linear-gradient(135deg, #454545, #161616 38%, #2e2e2e);
-    box-shadow: inset 0 1px rgb(255 255 255 / 22%), 0 0.34rem 0 rgb(0 0 0 / 20%);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 22%),
+      0 0.34rem 0 rgb(0 0 0 / 20%);
   }
 
   .key-slot {
@@ -197,7 +212,9 @@
     border: 1px solid #a69e8f;
     border-radius: 0 0 0.24rem 0.24rem;
     background: linear-gradient(100deg, #d9d1be, #fffdf3 12% 72%, #d7ceba);
-    box-shadow: inset 0 -0.22rem 0 #c5bba6, inset 0 1px #fff;
+    box-shadow:
+      inset 0 -0.22rem 0 #c5bba6,
+      inset 0 1px #fff;
     color: #514b42;
     font-size: 0.62rem;
     font-weight: 700;
@@ -222,7 +239,9 @@
     border: 1px solid #050505;
     border-radius: 0 0 0.18rem 0.18rem;
     background: linear-gradient(105deg, #0b0b0b, #4b4b4b 42%, #070707 60%);
-    box-shadow: inset 0 1px rgb(255 255 255 / 20%), 0 0.16rem 0 #050505;
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 20%),
+      0 0.16rem 0 #050505;
     color: #eee7d4;
     font-size: 0.42rem;
     font-weight: 700;

@@ -215,16 +215,8 @@
     border: 1px solid color-mix(in srgb, var(--card-accent) 45%, transparent);
     border-radius: 0.65rem;
     background:
-      radial-gradient(
-        circle at 12% 4%,
-        rgb(255 255 255 / 42%),
-        transparent 28%
-      ),
-      repeating-linear-gradient(
-        135deg,
-        rgb(24 50 25 / 10%) 0 1px,
-        transparent 1px 9px
-      ),
+      radial-gradient(circle at 12% 4%, rgb(255 255 255 / 42%), transparent 28%),
+      repeating-linear-gradient(135deg, rgb(24 50 25 / 10%) 0 1px, transparent 1px 9px),
       var(--card-background);
     color: var(--card-accent);
   }
@@ -276,12 +268,7 @@
     place-items: center;
     overflow: hidden;
     background:
-      linear-gradient(
-        90deg,
-        transparent 48%,
-        rgb(255 255 255 / 25%) 49% 51%,
-        transparent 52%
-      ),
+      linear-gradient(90deg, transparent 48%, rgb(255 255 255 / 25%) 49% 51%, transparent 52%),
       linear-gradient(#ffc06a 0 67%, #e83d89 67% 70%, #6040a8 70%);
   }
 

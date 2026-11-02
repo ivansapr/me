@@ -1,6 +1,7 @@
 import ChordNotesCard from './ChordNotesCard.svelte';
 import FitnessCard from './Gym/FitnessCard.svelte';
 import TickspotApiCard from './TickspotApiCard.svelte';
+import WishlistCard from './WishlistCard.svelte';
 import type { ProjectDefinition } from '$lib/types/projects';
 
 export const projects = [
@@ -31,6 +32,16 @@ export const projects = [
     order: 3,
     theme: { background: '#a9d5ff', foreground: '#172554', accent: '#172554' },
     visual: TickspotApiCard
+  },
+  {
+    slug: 'wishlist',
+    title: 'Wishlist',
+    description:
+      'Store and share wishlists, and connect them to AI through an MCP server.',
+    href: 'https://wish.ivansapr.me/',
+    order: 4,
+    theme: { background: '#ffd2a8', foreground: '#3b1d0f', accent: '#7a2e12' },
+    visual: WishlistCard
   }
 ] satisfies readonly ProjectDefinition[];
 

@@ -6,7 +6,7 @@ test('shows the bookshelf and explicit project links', async ({ page }) => {
   await expect(
     page.getByRole('heading', { name: /Ivan Saprykin/ })
   ).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open' })).toHaveCount(3);
+  await expect(page.getByRole('link', { name: 'Open' })).toHaveCount(4);
   await expect(
     page.getByRole('link', { name: 'Open' }).first()
   ).toHaveAttribute('target', '_blank');

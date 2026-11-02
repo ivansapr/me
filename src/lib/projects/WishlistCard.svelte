@@ -147,9 +147,6 @@
     aria-label="3D claw machine filled with prize balls"
   >
     <canvas bind:this={canvas} aria-hidden="true"></canvas>
-    {#if ready}
-      <span class="counter" aria-hidden="true">{remaining} left</span>
-    {/if}
   </div>
 
   <div class="console">
@@ -244,20 +241,6 @@
     display: block;
     width: 100%;
     height: 100%;
-  }
-
-  .counter {
-    position: absolute;
-    top: 0.45rem;
-    left: 0.45rem;
-    padding: 0.15rem 0.45rem;
-    border: 2px solid var(--ink);
-    border-radius: 999px;
-    background: var(--paper);
-    font-size: 0.68rem;
-    font-variant-numeric: tabular-nums;
-    font-weight: 800;
-    line-height: 1.2;
   }
 
   .console {

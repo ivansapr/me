@@ -41,6 +41,12 @@ const GRIP_CLOSED = -0.03;
 const FIXED_STEP = 1 / 60;
 const REVEAL_SECONDS = 2.6;
 const PIT_Y = -1;
+// Every other drop gets a hidden magnet so the game stays winnable.
+// It only reaches balls just under the claw head and pulls harder than gravity.
+const ASSIST_FORCE = 1.6 * 28;
+const ASSIST_RADIUS = 0.45;
+const ASSIST_REACH = 0.35;
+const HEAD_HALF_HEIGHT = 0.18;
 
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
 const easeBack = (t: number) => 1 + 2.7 * (t - 1) ** 3 + 1.7 * (t - 1) ** 2;
@@ -490,6 +496,9 @@ export function createClawScene(
   let gripTarget = 0;
   let lifted = false;
   let won = false;
+  let assisted = false;
+  let attempts = Math.random() < 0.5 ? 0 : 1;
+  const assistVector = new CANNON.Vec3();
   let resolveDrop: ((result: DropResult) => void) | null = null;
   let revealRoot: THREE.Group | null = null;
   let revealBall: THREE.Group | null = null;
@@ -568,6 +577,31 @@ export function createClawScene(
     const k = Math.min(1, dt * 9);
     pos.x += (target.x - pos.x) * k;
     pos.z += (target.z - pos.z) * k;
+  }
+
+  function applyAssist() {
+    if (!assisted) return;
+    if (phase !== 'closing' && phase !== 'raising' && phase !== 'carrying') {
+      return;
+    }
+    const contactY = clawY - HEAD_HALF_HEIGHT - RADIUS;
+    for (const ball of balls) {
+      const { position } = ball.body;
+      const offset = Math.hypot(position.x - pos.x, position.z - pos.z);
+      const gap = position.y - contactY;
+      if (offset > ASSIST_RADIUS || gap < -0.35 || gap > ASSIST_REACH) continue;
+      const falloff =
+        (1 - (0.5 * offset) / ASSIST_RADIUS) *
+        (1 - (0.5 * Math.max(0, gap)) / ASSIST_REACH);
+      const force = ASSIST_FORCE * falloff * ball.body.mass;
+      assistVector.set(
+        (pos.x - position.x) * force,
+        force,
+        (pos.z - position.z) * force
+      );
+      ball.body.applyForce(assistVector);
+      ball.body.wakeUp();
+    }
   }
 
   function stepClaw(dt: number) {
@@ -654,6 +688,7 @@ export function createClawScene(
     cable.position.set(pos.x, (6 + clawY) / 2, pos.z);
     cable.scale.y = 6 - clawY;
     driveClawBodies(dt);
+    applyAssist();
   }
 
   // Loop with a fixed physics step so the kinematic claw pushes balls reliably.
@@ -723,6 +758,8 @@ export function createClawScene(
       direction = { x: 0, z: 0 };
       lifted = false;
       won = false;
+      attempts += 1;
+      assisted = attempts % 2 === 0;
       setPhase('lowering');
       return new Promise<DropResult>((resolve) => {
         resolveDrop = resolve;

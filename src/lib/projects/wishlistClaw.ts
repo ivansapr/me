@@ -1,29 +1,38 @@
-export type ClawPosition = { col: number; row: number };
+export type Vec2 = { x: number; z: number };
 export type ClawDirection = 'left' | 'right' | 'back' | 'front';
 
-export const gridSize = 3;
-export const chute: ClawPosition = { col: 0, row: gridSize - 1 };
+export const clawLimit = 2.55;
+export const chutePosition: Vec2 = { x: -2.25, z: 2.25 };
 
-const deltas: Record<ClawDirection, ClawPosition> = {
-  left: { col: -1, row: 0 },
-  right: { col: 1, row: 0 },
-  back: { col: 0, row: -1 },
-  front: { col: 0, row: 1 }
+const s = Math.SQRT1_2;
+
+// Directions are relative to the isometric camera looking from (+x, +z).
+const directions: Record<ClawDirection, Vec2> = {
+  right: { x: s, z: -s },
+  left: { x: -s, z: s },
+  back: { x: -s, z: -s },
+  front: { x: s, z: s }
 };
 
-const clamp = (value: number) => Math.min(gridSize - 1, Math.max(0, value));
+const clamp = (value: number) =>
+  Math.min(clawLimit, Math.max(-clawLimit, value));
 
-export function moveClaw(
-  position: ClawPosition,
-  direction: ClawDirection
-): ClawPosition {
-  const delta = deltas[direction];
-  return {
-    col: clamp(position.col + delta.col),
-    row: clamp(position.row + delta.row)
-  };
+export function sumDirections(active: readonly ClawDirection[]): Vec2 {
+  const sum = { x: 0, z: 0 };
+  for (const name of active) {
+    sum.x += directions[name].x;
+    sum.z += directions[name].z;
+  }
+  return sum;
 }
 
-export function isChute(position: ClawPosition): boolean {
-  return position.col === chute.col && position.row === chute.row;
+export function clampClaw(position: Vec2): Vec2 {
+  return { x: clamp(position.x), z: clamp(position.z) };
+}
+
+export function isOverChute(position: Vec2, tolerance = 0.1): boolean {
+  return (
+    Math.hypot(position.x - chutePosition.x, position.z - chutePosition.z) <=
+    tolerance
+  );
 }

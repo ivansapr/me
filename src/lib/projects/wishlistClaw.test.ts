@@ -1,19 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { isChute, moveClaw } from './wishlistClaw';
+import {
+  chutePosition,
+  clampClaw,
+  clawLimit,
+  isOverChute,
+  sumDirections
+} from './wishlistClaw';
 
-describe('wishlist claw movement', () => {
-  it('moves one cell at a time', () => {
-    expect(moveClaw({ col: 1, row: 1 }, 'right')).toEqual({ col: 2, row: 1 });
-    expect(moveClaw({ col: 1, row: 1 }, 'back')).toEqual({ col: 1, row: 0 });
+describe('wishlist claw helpers', () => {
+  it('maps screen directions to the camera plane', () => {
+    const right = sumDirections(['right']);
+    expect(right.x).toBeGreaterThan(0);
+    expect(right.z).toBeLessThan(0);
+    expect(sumDirections(['left', 'right'])).toEqual({ x: 0, z: 0 });
   });
 
-  it('stays inside the cabinet', () => {
-    expect(moveClaw({ col: 0, row: 0 }, 'left')).toEqual({ col: 0, row: 0 });
-    expect(moveClaw({ col: 2, row: 2 }, 'front')).toEqual({ col: 2, row: 2 });
+  it('keeps the claw inside the cabinet', () => {
+    expect(clampClaw({ x: 9, z: -9 })).toEqual({ x: clawLimit, z: -clawLimit });
+    expect(clampClaw({ x: 1, z: 1 })).toEqual({ x: 1, z: 1 });
   });
 
-  it('identifies the chute cell', () => {
-    expect(isChute({ col: 0, row: 2 })).toBe(true);
-    expect(isChute({ col: 1, row: 1 })).toBe(false);
+  it('detects the chute', () => {
+    expect(isOverChute(chutePosition)).toBe(true);
+    expect(isOverChute({ x: 0, z: 0 })).toBe(false);
   });
 });

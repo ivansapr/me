@@ -1,201 +1,116 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import type { ProjectCardVisualProps } from '$lib/types/projects';
-  import {
-    chute,
-    gridSize,
-    isChute,
-    moveClaw,
-    type ClawDirection,
-    type ClawPosition
-  } from './wishlistClaw';
+  import { sumDirections, type ClawDirection } from './wishlistClaw';
+  import { prizeLabels, prizeSrc, type Prize } from './wishlistPrizes';
+  import type { ClawScene } from './wishlistScene';
 
-  type Prize = 'gift' | 'heart' | 'star' | 'book' | 'camera' | 'headphones';
-  type Ball = { id: number; col: number; row: number; prize: Prize };
-  type Phase =
-    'idle' | 'dropping' | 'grabbing' | 'rising' | 'carrying' | 'opening';
-
-  const prizes: Prize[] = [
-    'gift',
-    'heart',
-    'star',
-    'book',
-    'camera',
-    'headphones'
-  ];
-  const prizeLabels: Record<Prize, string> = {
-    gift: 'a gift',
-    heart: 'a heart',
-    star: 'a star',
-    book: 'a book',
-    camera: 'a camera',
-    headphones: 'headphones'
-  };
-  const ballColors = ['#ff6b4a', '#ffc247', '#4fb6a8', '#7b6cf6'];
-  const cell = 16;
-  const restRod = 6;
-  const hitRod = 40;
-  const missRod = 47;
+  const idleStatus = 'Move the claw, then press drop.';
 
   let { theme }: ProjectCardVisualProps = $props();
-  let claw = $state<ClawPosition>({ col: 1, row: 1 });
-  let balls = $state<Ball[]>(createBalls());
-  let phase = $state<Phase>('idle');
-  let rod = $state(restRod);
-  let clawOpen = $state(true);
-  let carried = $state<Ball | null>(null);
-  let opened = $state<Ball | null>(null);
+  let canvas = $state<HTMLCanvasElement>();
+  let scene: ClawScene | undefined;
+  let ready = $state(false);
+  let busy = $state(false);
+  let remaining = $state(1);
+  let status = $state('Loading the machine…');
+  let opened = $state<Prize | null>(null);
   let collected = $state<Prize[]>([]);
-  let status = $state('Line up the claw over a ball.');
-  let destroyed = false;
 
-  let busy = $derived(phase !== 'idle');
-  let soldOut = $derived(balls.length === 0 && !carried && !opened);
+  const pressed = new SvelteSet<ClawDirection>();
+  let soldOut = $derived(ready && remaining === 0);
 
-  function createBalls(): Ball[] {
-    const list: Ball[] = [];
-    for (let row = 0; row < gridSize; row += 1) {
-      for (let col = 0; col < gridSize; col += 1) {
-        if (isChute({ col, row })) continue;
-        const id = list.length;
-        list.push({ id, col, row, prize: prizes[id % prizes.length] });
-      }
-    }
-    return list;
-  }
+  onMount(() => {
+    let disposed = false;
+    const element = canvas;
+    if (!element) return;
 
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve) => setTimeout(resolve, ms));
+    import('./wishlistScene')
+      .then(({ createClawScene }) => {
+        if (disposed) return;
+        scene = createClawScene(element, {
+          onFreePrize: (prize) => win(prize)
+        });
+        remaining = scene.remaining;
+        ready = true;
+        status = idleStatus;
+      })
+      .catch(() => {
+        status = '3D view is not supported on this device.';
+      });
 
-  onDestroy(() => {
-    destroyed = true;
+    return () => {
+      disposed = true;
+      scene?.dispose();
+    };
   });
 
-  function move(direction: ClawDirection) {
-    if (busy) return;
+  function win(prize: Prize) {
+    opened = prize;
+    collected = [...collected, prize];
+    remaining = scene?.remaining ?? 0;
+    status = `The ball opens. It is ${prizeLabels[prize]}!`;
+  }
+
+  function applyDirection() {
+    scene?.setDirection(sumDirections([...pressed]));
+  }
+
+  function press(direction: ClawDirection, event: PointerEvent) {
+    if (busy || !ready) return;
     opened = null;
-    claw = moveClaw(claw, direction);
-    status = isChute(claw) ? 'That is the prize chute.' : 'Press drop to grab.';
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    pressed.add(direction);
+    applyDirection();
+  }
+
+  function release(direction: ClawDirection) {
+    pressed.delete(direction);
+    applyDirection();
+  }
+
+  // Keyboard and assistive-technology activation arrives as a click without pointer detail.
+  function nudge(direction: ClawDirection, event: MouseEvent) {
+    if (event.detail !== 0 || busy || !ready) return;
+    opened = null;
+    scene?.nudge(sumDirections([direction]));
   }
 
   async function drop() {
-    if (busy || soldOut) return;
+    if (!scene || busy) return;
+    pressed.clear();
+    applyDirection();
     opened = null;
-    const target = balls.find(
-      (ball) => ball.col === claw.col && ball.row === claw.row
-    );
-
-    phase = 'dropping';
+    busy = true;
     status = 'Dropping…';
-    rod = target ? hitRod : missRod;
-    await sleep(750);
-    if (destroyed) return;
-
-    phase = 'grabbing';
-    clawOpen = false;
-    await sleep(350);
-    if (destroyed) return;
-
-    if (target) {
-      balls = balls.filter((ball) => ball.id !== target.id);
-      carried = target;
-    }
-    phase = 'rising';
-    rod = restRod;
-    await sleep(700);
-    if (destroyed) return;
-
-    if (!target) {
-      clawOpen = true;
-      phase = 'idle';
+    const result = await scene.drop();
+    busy = false;
+    if (result.kind === 'prize') win(result.prize);
+    else if (result.kind === 'slip') status = 'It slipped! Try again.';
+    else if (result.kind === 'miss')
       status = 'Nothing there. Try another spot.';
-      return;
-    }
-
-    phase = 'carrying';
-    status = 'Got one!';
-    claw = { ...chute };
-    await sleep(900);
-    if (destroyed) return;
-
-    clawOpen = true;
-    opened = target;
-    carried = null;
-    phase = 'opening';
-    status = `The ball opens. It is ${prizeLabels[target.prize]}!`;
-    collected = [...collected, target.prize];
-    await sleep(1400);
-    if (destroyed) return;
-
-    phase = 'idle';
-    if (balls.length === 0) status = 'Machine empty. Play again!';
+    remaining = scene.remaining;
+    if (remaining === 0 && result.kind !== 'prize') status = 'Machine empty.';
   }
 
   function reset() {
-    if (phase === 'carrying' || phase === 'opening') return;
-    balls = createBalls();
+    if (!scene || busy) return;
+    scene.reset();
+    remaining = scene.remaining;
     collected = [];
     opened = null;
-    claw = { col: 1, row: 1 };
-    status = 'Line up the claw over a ball.';
+    status = idleStatus;
   }
 
-  const pos = (index: number) => (index - 1) * cell;
+  const controls: { direction: ClawDirection; label: string; arrow: string }[] =
+    [
+      { direction: 'back', label: 'Move claw back', arrow: '↑' },
+      { direction: 'left', label: 'Move claw left', arrow: '←' },
+      { direction: 'front', label: 'Move claw forward', arrow: '↓' },
+      { direction: 'right', label: 'Move claw right', arrow: '→' }
+    ];
 </script>
-
-{#snippet icon(kind: Prize)}
-  <svg viewBox="0 0 24 24" aria-hidden="true" class="icon">
-    {#if kind === 'gift'}
-      <rect x="4" y="10" width="16" height="10" rx="1.5" fill="#ff6b4a" />
-      <rect x="3" y="7" width="18" height="4" rx="1" fill="#ffc247" />
-      <rect x="11" y="7" width="2" height="13" fill="#fff4e0" />
-      <path
-        d="M12 7C9 7 8 3.5 10.5 3.5S12 6 12 7zM12 7c3 0 4-3.5 1.5-3.5S12 6 12 7z"
-        fill="#fff4e0"
-      />
-    {:else if kind === 'heart'}
-      <path
-        d="M12 21C4 15 3 11 3 8.5A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 9 1.5C21 11 20 15 12 21z"
-        fill="#ff4f6d"
-      />
-    {:else if kind === 'star'}
-      <path
-        d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.3l-5.9 3.2 1.2-6.5-4.8-4.6 6.6-.9z"
-        fill="#ffc247"
-      />
-    {:else if kind === 'book'}
-      <rect x="5" y="3" width="14" height="18" rx="1.5" fill="#4fb6a8" />
-      <rect x="5" y="3" width="3" height="18" fill="#2f8579" />
-      <rect x="10" y="7" width="6" height="2" fill="#fff4e0" />
-      <rect x="10" y="11" width="4" height="2" fill="#fff4e0" />
-    {:else if kind === 'camera'}
-      <rect x="2.5" y="7" width="19" height="13" rx="2.5" fill="#7b6cf6" />
-      <rect x="8" y="4" width="8" height="4" rx="1" fill="#7b6cf6" />
-      <circle cx="12" cy="13.5" r="4" fill="#fff4e0" />
-      <circle cx="12" cy="13.5" r="2" fill="#3b1d0f" />
-    {:else}
-      <path
-        d="M4 15v-3a8 8 0 0 1 16 0v3"
-        fill="none"
-        stroke="#3b1d0f"
-        stroke-width="2"
-        stroke-linecap="round"
-      />
-      <rect x="2.5" y="14" width="5" height="7" rx="2" fill="#ff6b4a" />
-      <rect x="16.5" y="14" width="5" height="7" rx="2" fill="#ff6b4a" />
-    {/if}
-  </svg>
-{/snippet}
-
-{#snippet sphere(ball: Ball, split: boolean)}
-  <span class="ball" style:--ball={ballColors[ball.id % ballColors.length]}>
-    <span class="half top" class:is-split={split}></span>
-    <span class="half bottom"></span>
-    {#if split}
-      <span class="prize">{@render icon(ball.prize)}</span>
-    {/if}
-  </span>
-{/snippet}
 
 <div
   class="wishlist-game"
@@ -204,108 +119,48 @@
   style:--card-accent={theme.accent}
 >
   <div class="field">
-    <div class="cabinet" aria-hidden="true">
-      <span class="face back"></span>
-      <span class="face left"></span>
-      <span class="face floor"></span>
-      <span class="face right"></span>
-      <span class="face front"></span>
-      <span
-        class="chute"
-        style:transform="translate3d({pos(chute.col)}cqw, 30cqw, {pos(
-          chute.row
-        )}cqw) rotateX(90deg)"
-      ></span>
-
-      {#each balls as ball (ball.id)}
-        <span
-          class="billboard"
-          style:transform="translate3d({pos(ball.col)}cqw, 23cqw, {pos(
-            ball.row
-          )}cqw) rotateY(28deg) rotateX(18deg)"
-        >
-          {@render sphere(ball, false)}
-        </span>
-      {/each}
-
-      {#if opened}
-        <span
-          class="billboard"
-          style:transform="translate3d({pos(chute.col)}cqw, 23cqw, {pos(
-            chute.row
-          )}cqw) rotateY(28deg) rotateX(18deg)"
-        >
-          {@render sphere(opened, true)}
-        </span>
-      {/if}
-
-      <span
-        class="billboard claw"
-        style:--rod="{rod}cqw"
-        style:transform="translate3d({pos(claw.col)}cqw, -30cqw, {pos(
-          claw.row
-        )}cqw) rotateY(28deg) rotateX(18deg)"
-      >
-        <span class="rod"></span>
-        <span class="head" class:is-closed={!clawOpen}>
-          <span class="prong left"></span>
-          <span class="prong right"></span>
-        </span>
-        {#if carried}
-          <span class="carried">{@render sphere(carried, false)}</span>
-        {/if}
-      </span>
-    </div>
+    <canvas bind:this={canvas} aria-label="3D claw machine"></canvas>
   </div>
 
   <div class="console">
     <p class="status" role="status" aria-live="polite">
-      {#if opened}<span class="reveal">{@render icon(opened.prize)}</span>{/if}
+      {#if opened}
+        <img class="reveal" src={prizeSrc(opened)} alt="" />
+      {/if}
       {status}
     </p>
 
     <div class="pad" role="group" aria-label="Move claw">
-      <button
-        type="button"
-        class="pad-back"
-        aria-label="Move claw back"
-        disabled={busy}
-        onclick={() => move('back')}>↑</button
-      >
-      <button
-        type="button"
-        class="pad-left"
-        aria-label="Move claw left"
-        disabled={busy}
-        onclick={() => move('left')}>←</button
-      >
-      <button
-        type="button"
-        class="pad-right"
-        aria-label="Move claw right"
-        disabled={busy}
-        onclick={() => move('right')}>→</button
-      >
-      <button
-        type="button"
-        class="pad-front"
-        aria-label="Move claw forward"
-        disabled={busy}
-        onclick={() => move('front')}>↓</button
-      >
+      {#each controls as { direction, label, arrow } (direction)}
+        <button
+          type="button"
+          class="pad-{direction}"
+          aria-label={label}
+          disabled={busy || !ready}
+          onpointerdown={(event) => press(direction, event)}
+          onpointerup={() => release(direction)}
+          onpointercancel={() => release(direction)}
+          onclick={(event) => nudge(direction, event)}>{arrow}</button
+        >
+      {/each}
     </div>
 
     {#if soldOut}
       <button type="button" class="drop" onclick={reset}>Play again</button>
     {:else}
-      <button type="button" class="drop" disabled={busy} onclick={drop}
-        >Drop</button
+      <button
+        type="button"
+        class="drop"
+        disabled={busy || !ready}
+        onclick={drop}>Drop</button
       >
     {/if}
 
     <ul class="shelf" aria-label="Collected prizes">
       {#each collected as prize, index (index)}
-        <li title={prizeLabels[prize]}>{@render icon(prize)}</li>
+        <li title={prizeLabels[prize]}>
+          <img src={prizeSrc(prize)} alt={prizeLabels[prize]} />
+        </li>
       {/each}
     </ul>
   </div>
@@ -335,196 +190,10 @@
     aspect-ratio: 1;
     align-self: center;
     container-type: inline-size;
+    overflow: hidden;
     border-radius: 0.5rem;
     background: linear-gradient(160deg, #fff0dc, #ffc89a);
     box-shadow: inset 0 0 0 2px var(--ink);
-  }
-
-  .cabinet {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 0;
-    height: 0;
-    transform: rotateX(-18deg) rotateY(-28deg);
-    transform-style: preserve-3d;
-  }
-
-  .face,
-  .chute,
-  .billboard {
-    position: absolute;
-    top: 0;
-    left: 0;
-    transform-style: preserve-3d;
-  }
-
-  .face {
-    width: 60cqw;
-    height: 60cqw;
-    margin: -30cqw 0 0 -30cqw;
-    border: 0.5cqw solid var(--ink);
-    box-sizing: border-box;
-  }
-
-  .back {
-    transform: translateZ(-30cqw);
-    background: #ffe3c4;
-  }
-
-  .left {
-    transform: rotateY(90deg) translateZ(-30cqw);
-    background: #f7c99c;
-  }
-
-  .floor {
-    transform: rotateX(90deg) translateZ(-30cqw);
-    background: #e59a62;
-  }
-
-  .right {
-    transform: rotateY(90deg) translateZ(30cqw);
-    background: var(--glass);
-  }
-
-  .front {
-    transform: translateZ(30cqw);
-    background: var(--glass);
-  }
-
-  .chute {
-    width: 16cqw;
-    height: 16cqw;
-    margin: -8cqw 0 0 -8cqw;
-    border: 0.5cqw dashed var(--ink);
-    background: #8a3a1c;
-  }
-
-  .billboard {
-    width: 0;
-    height: 0;
-    transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .ball {
-    position: absolute;
-    top: -7cqw;
-    left: -7cqw;
-    width: 14cqw;
-    height: 14cqw;
-    display: block;
-  }
-
-  .half {
-    position: absolute;
-    inset: 0;
-    border: 0.5cqw solid var(--ink);
-    border-radius: 50%;
-    box-sizing: border-box;
-    background: radial-gradient(
-      circle at 32% 28%,
-      #fff8 0 12%,
-      var(--ball) 40%,
-      color-mix(in srgb, var(--ball) 60%, #000) 100%
-    );
-    transition:
-      transform 0.6s cubic-bezier(0.3, 1.4, 0.5, 1),
-      opacity 0.6s;
-  }
-
-  .half.top {
-    clip-path: inset(0 0 50% 0);
-  }
-
-  .half.bottom {
-    clip-path: inset(50% 0 0 0);
-  }
-
-  .half.top.is-split {
-    transform: translate(-3cqw, -7cqw) rotate(-35deg);
-    opacity: 0.85;
-  }
-
-  .prize {
-    position: absolute;
-    top: -10cqw;
-    left: 1cqw;
-    width: 12cqw;
-    height: 12cqw;
-    animation: pop 0.8s 0.15s cubic-bezier(0.3, 1.5, 0.5, 1) both;
-  }
-
-  .icon {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-
-  .rod {
-    position: absolute;
-    top: 0;
-    left: -0.5cqw;
-    width: 1cqw;
-    height: var(--rod);
-    background: var(--ink);
-    transition: height 0.7s ease-in-out;
-  }
-
-  .head {
-    position: absolute;
-    top: var(--rod);
-    left: -4cqw;
-    width: 8cqw;
-    height: 9cqw;
-    transition: top 0.7s ease-in-out;
-  }
-
-  .head::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 1cqw;
-    width: 6cqw;
-    height: 3cqw;
-    border: 0.5cqw solid var(--ink);
-    border-radius: 1cqw;
-    background: #ffc247;
-    box-sizing: border-box;
-  }
-
-  .prong {
-    position: absolute;
-    top: 3cqw;
-    width: 1.2cqw;
-    height: 6cqw;
-    background: var(--ink);
-    transition: transform 0.3s;
-    transform-origin: top center;
-  }
-
-  .prong.left {
-    left: 1cqw;
-    transform: rotate(28deg);
-  }
-
-  .prong.right {
-    right: 1cqw;
-    transform: rotate(-28deg);
-  }
-
-  .head.is-closed .prong.left {
-    transform: rotate(-6deg);
-  }
-
-  .head.is-closed .prong.right {
-    transform: rotate(6deg);
-  }
-
-  .carried {
-    position: absolute;
-    top: calc(var(--rod) + 5cqw);
-    left: 0;
-    transition: top 0.7s ease-in-out;
   }
 
   .console {
@@ -545,6 +214,12 @@
     font-size: 0.6rem;
     font-weight: 800;
     line-height: 1.25;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 
   .reveal {
@@ -620,6 +295,7 @@
     width: auto;
     height: auto;
     margin: 0;
+    touch-action: none;
     transform: none;
   }
 
@@ -640,6 +316,12 @@
     list-style: none;
   }
 
+  .shelf img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
   .shelf li {
     width: 1.05rem;
     height: 1.05rem;
@@ -654,20 +336,6 @@
     to {
       opacity: 1;
       transform: translateY(0) scale(1);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .billboard,
-    .rod,
-    .head,
-    .carried,
-    .half,
-    .prong,
-    .prize,
-    .reveal {
-      animation: none;
-      transition: none;
     }
   }
 </style>

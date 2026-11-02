@@ -17,6 +17,12 @@
   let status = $state('Loading the machine…');
   let opened = $state<Prize | null>(null);
   let collected = $state<Prize[]>([]);
+  let magnet = $state(false);
+  let magnetPercent = $state(5);
+
+  $effect(() => {
+    scene?.setMagnet(magnet, magnetPercent);
+  });
 
   const pressed = new SvelteSet<ClawDirection>();
   let soldOut = $derived(ready && remaining === 0);
@@ -154,6 +160,29 @@
         onclick={drop}>Drop</button
       >
     {/if}
+
+    <div class="debug">
+      <button
+        type="button"
+        class="magnet"
+        aria-pressed={magnet}
+        onclick={() => (magnet = !magnet)}
+        >Magnet {magnet ? 'on' : 'off'}</button
+      >
+      {#if magnet}
+        <label>
+          <span class="sr-only">Magnet strength percent</span>
+          <input
+            type="range"
+            min="1"
+            max="10"
+            step="1"
+            bind:value={magnetPercent}
+          />
+          <output>{magnetPercent}%</output>
+        </label>
+      {/if}
+    </div>
 
     <ul class="shelf" aria-label="Collected prizes">
       {#each collected as prize, index (index)}
@@ -303,6 +332,46 @@
     font-size: 0.7rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  .debug {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.55rem;
+    font-weight: 800;
+  }
+
+  .debug label {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 0.2rem;
+  }
+
+  .debug input {
+    min-width: 0;
+    flex: 1;
+    accent-color: #4f46e5;
+  }
+
+  button.magnet {
+    min-height: 1.5rem;
+    padding: 0 0.4rem;
+    font-size: 0.55rem;
+  }
+
+  button.magnet[aria-pressed='true'] {
+    background: #c7c3ff;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 
   .shelf {

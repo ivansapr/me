@@ -15,6 +15,7 @@ export type ClawScene = {
   setDirection(direction: Vec2): void;
   nudge(direction: Vec2): void;
   drop(): Promise<DropResult>;
+  setMagnet(enabled: boolean, percent: number): void;
   reset(): void;
   readonly remaining: number;
   dispose(): void;
@@ -38,6 +39,11 @@ const CLAW_MIN_Y = 1.35;
 const CLAW_MAX_Y = 5.2;
 const GRIP_OPEN = 0.5;
 const GRIP_CLOSED = -0.03;
+// Pull at 10% roughly cancels 1.8x a ball's weight at contact, fading to zero at the edge.
+const MAGNET_MAX_FORCE = 1.8 * 28;
+const MAGNET_RADIUS = 0.3;
+const MAGNET_REACH = 0.3;
+const HEAD_HALF_HEIGHT = 0.18;
 const FIXED_STEP = 1 / 60;
 const REVEAL_SECONDS = 2.6;
 const PIT_Y = -1;
@@ -237,6 +243,16 @@ export function createClawScene(
     [0, 0, 0],
     clawGroup
   ).castShadow = true;
+  const magnetMarker = new THREE.Mesh(
+    track(new THREE.CylinderGeometry(MAGNET_RADIUS, MAGNET_RADIUS, 0.04, 24)),
+    track(new THREE.MeshBasicMaterial({ color: '#4f46e5' }))
+  );
+  magnetMarker.position.y = -HEAD_HALF_HEIGHT;
+  magnetMarker.visible = false;
+  clawGroup.add(magnetMarker);
+  let magnetOn = false;
+  let magnetPercent = 5;
+
   const PRONG_LENGTH = 1.05;
   const PIVOT_RADIUS = 0.6;
   const PIVOT_Y = -0.15;
@@ -569,6 +585,31 @@ export function createClawScene(
     pos.z += (target.z - pos.z) * k;
   }
 
+  function applyMagnet() {
+    if (!magnetOn) return;
+    const strength = (magnetPercent / 10) * MAGNET_MAX_FORCE;
+    const contactY = clawY - HEAD_HALF_HEIGHT - RADIUS;
+    for (const ball of balls) {
+      const offset = Math.hypot(
+        ball.body.position.x - pos.x,
+        ball.body.position.z - pos.z
+      );
+      const gap = ball.body.position.y - contactY;
+      if (offset > MAGNET_RADIUS || gap < -0.1 || gap > MAGNET_REACH) continue;
+      const falloff =
+        (1 - offset / MAGNET_RADIUS) * (1 - Math.max(0, gap) / MAGNET_REACH);
+      const force = strength * falloff * ball.body.mass;
+      ball.body.applyForce(
+        new CANNON.Vec3(
+          (pos.x - ball.body.position.x) * force * 0.5,
+          force,
+          (pos.z - ball.body.position.z) * force * 0.5
+        )
+      );
+      ball.body.wakeUp();
+    }
+  }
+
   function stepClaw(dt: number) {
     phaseTime += dt;
 
@@ -652,6 +693,7 @@ export function createClawScene(
     cable.position.set(pos.x, (6 + clawY) / 2, pos.z);
     cable.scale.y = 6 - clawY;
     driveClawBodies(dt);
+    applyMagnet();
   }
 
   // Loop with a fixed physics step so the kinematic claw pushes balls reliably.
@@ -725,6 +767,11 @@ export function createClawScene(
       return new Promise<DropResult>((resolve) => {
         resolveDrop = resolve;
       });
+    },
+    setMagnet(enabled, percent) {
+      magnetOn = enabled;
+      magnetPercent = Math.min(10, Math.max(1, percent));
+      magnetMarker.visible = enabled;
     },
     reset() {
       if (phase !== 'idle') return;

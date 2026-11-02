@@ -7,7 +7,8 @@ describe('project registry', () => {
     expect(projects.map((project) => project.slug)).toEqual([
       'fitness-tracker',
       'chord-notes',
-      'tickspot-api'
+      'tickspot-api',
+      'wishlist'
     ]);
   });
 

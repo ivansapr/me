@@ -30,7 +30,7 @@
       .then(({ createClawScene }) => {
         if (disposed) return;
         scene = createClawScene(element, {
-          onFreePrize: (prize) => win(prize)
+          onPrize: (prize) => win(prize)
         });
         remaining = scene.remaining;
         ready = true;
@@ -86,8 +86,7 @@
     status = 'Dropping…';
     const result = await scene.drop();
     busy = false;
-    if (result.kind === 'prize') win(result.prize);
-    else if (result.kind === 'slip') status = 'It slipped! Try again.';
+    if (result.kind === 'slip') status = 'It slipped! Try again.';
     else if (result.kind === 'miss')
       status = 'Nothing there. Try another spot.';
     remaining = scene.remaining;

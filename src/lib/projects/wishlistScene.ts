@@ -9,10 +9,7 @@ import {
 import { prizeSrc, prizes, type Prize } from './wishlistPrizes';
 
 export type DropResult =
-  | { kind: 'busy' }
-  | { kind: 'miss' }
-  | { kind: 'slip' }
-  | { kind: 'prize'; prize: Prize };
+  { kind: 'busy' } | { kind: 'miss' } | { kind: 'slip' } | { kind: 'prize' };
 
 export type ClawScene = {
   setDirection(direction: Vec2): void;
@@ -23,16 +20,9 @@ export type ClawScene = {
   dispose(): void;
 };
 
-type Options = { onFreePrize?: (prize: Prize) => void };
+type Options = { onPrize?: (prize: Prize) => void };
 type Phase =
-  | 'idle'
-  | 'lowering'
-  | 'closing'
-  | 'raising'
-  | 'carrying'
-  | 'releasing'
-  | 'falling'
-  | 'revealing';
+  'idle' | 'lowering' | 'closing' | 'raising' | 'carrying' | 'releasing';
 type Ball = {
   prize: Prize;
   color: string;
@@ -46,8 +36,10 @@ const RADIUS = 0.5;
 const BALL_COUNT = 14;
 const CLAW_MIN_Y = 1.35;
 const CLAW_MAX_Y = 5.2;
-const GRIP_OPEN = 0.95;
-const GRIP_CLOSED = 0.3;
+const GRIP_OPEN = 0.5;
+const GRIP_CLOSED = -0.03;
+const FIXED_STEP = 1 / 60;
+const REVEAL_SECONDS = 2.6;
 const PIT_Y = -1;
 
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
@@ -65,7 +57,7 @@ export function createClawScene(
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-5.6, 5.6, 5.6, -5.6, 0.1, 60);
@@ -245,29 +237,114 @@ export function createClawScene(
     [0, 0, 0],
     clawGroup
   ).castShadow = true;
-  const prongGeometry = track(new THREE.BoxGeometry(0.1, 0.9, 0.1));
+  const PRONG_LENGTH = 1.05;
+  const PIVOT_RADIUS = 0.6;
+  const PIVOT_Y = -0.15;
+  const prongGeometry = track(new THREE.BoxGeometry(0.12, PRONG_LENGTH, 0.12));
   const prongMaterial = track(new THREE.MeshStandardMaterial({ color: INK }));
   const pivots: THREE.Group[] = [];
+  const prongMeshes: THREE.Mesh[] = [];
   for (let i = 0; i < 3; i += 1) {
     const angle = (i / 3) * Math.PI * 2;
     const pivot = new THREE.Group();
-    pivot.position.set(Math.cos(angle) * 0.3, -0.1, Math.sin(angle) * 0.3);
+    pivot.position.set(
+      Math.cos(angle) * PIVOT_RADIUS,
+      PIVOT_Y,
+      Math.sin(angle) * PIVOT_RADIUS
+    );
     pivot.rotation.y = -angle;
     const prong = new THREE.Mesh(prongGeometry, prongMaterial);
-    prong.position.y = -0.45;
+    prong.position.y = -PRONG_LENGTH / 2;
     prong.castShadow = true;
     pivot.add(prong);
     clawGroup.add(pivot);
     pivots.push(pivot);
+    prongMeshes.push(prong);
   }
 
-  const headBody = new CANNON.Body({
-    mass: 0,
-    type: CANNON.Body.KINEMATIC,
-    material: staticMaterial,
-    shape: new CANNON.Sphere(0.4)
-  });
-  world.addBody(headBody);
+  // Claw parts are kinematic bodies that follow the visible meshes.
+  const clawMaterial = new CANNON.Material('claw');
+  world.addContactMaterial(
+    new CANNON.ContactMaterial(clawMaterial, ballMaterial, {
+      friction: 0.5,
+      restitution: 0.05
+    })
+  );
+  function addKinematic(shape: CANNON.Shape) {
+    const body = new CANNON.Body({
+      mass: 0,
+      type: CANNON.Body.KINEMATIC,
+      material: clawMaterial,
+      shape
+    });
+    world.addBody(body);
+    return body;
+  }
+  const headBody = addKinematic(
+    new CANNON.Box(new CANNON.Vec3(0.42, 0.18, 0.42))
+  );
+  const prongBodies = prongMeshes.map(() =>
+    addKinematic(new CANNON.Box(new CANNON.Vec3(0.06, PRONG_LENGTH / 2, 0.06)))
+  );
+  let clawPosed = false;
+  const tmpPosition = new THREE.Vector3();
+  const tmpQuaternion = new THREE.Quaternion();
+  const tmpDelta = new THREE.Quaternion();
+  const tmpCurrent = new THREE.Quaternion();
+
+  function driveBody(
+    body: CANNON.Body,
+    position: THREE.Vector3,
+    quaternion: THREE.Quaternion,
+    dt: number
+  ) {
+    if (!clawPosed) {
+      body.position.set(position.x, position.y, position.z);
+      body.quaternion.set(
+        quaternion.x,
+        quaternion.y,
+        quaternion.z,
+        quaternion.w
+      );
+      return;
+    }
+    body.velocity.set(
+      (position.x - body.position.x) / dt,
+      (position.y - body.position.y) / dt,
+      (position.z - body.position.z) / dt
+    );
+    tmpCurrent.set(
+      body.quaternion.x,
+      body.quaternion.y,
+      body.quaternion.z,
+      body.quaternion.w
+    );
+    tmpDelta.copy(quaternion).multiply(tmpCurrent.invert());
+    if (tmpDelta.w < 0) {
+      tmpDelta.set(-tmpDelta.x, -tmpDelta.y, -tmpDelta.z, -tmpDelta.w);
+    }
+    const half = Math.acos(Math.min(1, tmpDelta.w));
+    const sin = Math.sin(half);
+    const rate = sin > 1e-6 ? (2 * half) / (sin * dt) : 0;
+    body.angularVelocity.set(
+      tmpDelta.x * rate,
+      tmpDelta.y * rate,
+      tmpDelta.z * rate
+    );
+  }
+
+  function driveClawBodies(dt: number) {
+    clawGroup.updateMatrixWorld(true);
+    tmpPosition.set(pos.x, clawY, pos.z);
+    tmpQuaternion.identity();
+    driveBody(headBody, tmpPosition, tmpQuaternion, dt);
+    prongMeshes.forEach((mesh, index) => {
+      mesh.getWorldPosition(tmpPosition);
+      mesh.getWorldQuaternion(tmpQuaternion);
+      driveBody(prongBodies[index], tmpPosition, tmpQuaternion, dt);
+    });
+    clawPosed = true;
+  }
 
   // Balls.
   const ballGeometries = {
@@ -409,42 +486,28 @@ export function createClawScene(
   let clawY = CLAW_MAX_Y;
   let grip = 0;
   let gripTarget = 0;
-  let held: Ball | null = null;
-  let slipHeight: number | null = null;
-  let outcome: 'miss' | 'slip' | 'grab' = 'miss';
+  let lifted = false;
+  let won = false;
   let resolveDrop: ((result: DropResult) => void) | null = null;
-  let dropping: Ball | null = null;
   let revealRoot: THREE.Group | null = null;
   let revealBall: THREE.Group | null = null;
   let revealSprite: THREE.Sprite | null = null;
-  let revealPrize: Prize | null = null;
-  let freeReveal = false;
+  let revealTime = 0;
 
   const setPhase = (next: Phase) => {
     phase = next;
     phaseTime = 0;
   };
 
-  function releaseHeld() {
-    if (!held) return;
-    held.body.type = CANNON.Body.DYNAMIC;
-    held.body.mass = 1;
-    held.body.updateMassProperties();
-    held.body.velocity.setZero();
-    held.body.wakeUp();
-    held = null;
-  }
-
   function clearReveal() {
     if (!revealRoot) return;
     scene.remove(revealRoot);
     revealRoot = revealBall = revealSprite = null;
-    revealPrize = null;
   }
 
   function startReveal(ball: Ball) {
     clearReveal();
-    revealPrize = ball.prize;
+    revealTime = 0;
     revealRoot = new THREE.Group();
     revealRoot.position.set(0, 2.4, 0);
     revealBall = buildBallGroup(BALL_COLORS.indexOf(ball.color));
@@ -461,24 +524,30 @@ export function createClawScene(
     revealRoot.add(revealSprite);
     scene.add(revealRoot);
     removeBall(ball);
-    setPhase('revealing');
+    won = true;
+    options.onPrize?.(ball.prize);
   }
 
-  function updateReveal() {
+  function updateReveal(dt: number) {
     if (!revealRoot || !revealBall || !revealSprite) return;
-    const grow = easeOut(clamp01(phaseTime / 0.6));
+    revealTime += dt;
+    if (revealTime > REVEAL_SECONDS) {
+      clearReveal();
+      return;
+    }
+    const grow = easeOut(clamp01(revealTime / 0.6));
     revealRoot.position.y = 2.4 + grow * 0.9;
     revealBall.scale.setScalar(0.6 + grow * 1.4);
-    revealBall.rotation.y = phaseTime * 2;
-    const open = easeBack(clamp01((phaseTime - 0.6) / 0.5));
+    revealBall.rotation.y = revealTime * 2;
+    const open = easeBack(clamp01((revealTime - 0.6) / 0.5));
     const top = revealBall.getObjectByName('top');
     if (top) {
       top.position.y = open * 0.35;
       top.rotation.z = open * -1.1;
     }
-    const size = open * 2.1;
-    revealSprite.scale.setScalar(Math.max(0.001, size));
-    revealSprite.position.y = 0.6 + open * 1.3 + Math.sin(phaseTime * 4) * 0.06;
+    revealSprite.scale.setScalar(Math.max(0.001, open * 2.1));
+    revealSprite.position.y =
+      0.6 + open * 1.3 + Math.sin(revealTime * 4) * 0.06;
   }
 
   function finish(result: DropResult) {
@@ -499,80 +568,44 @@ export function createClawScene(
     pos.z += (target.z - pos.z) * k;
   }
 
-  function grabNearest() {
-    const tip = new CANNON.Vec3(pos.x, clawY - 0.55, pos.z);
-    let best: Ball | null = null;
-    let bestDistance = 0.95;
-    for (const ball of balls) {
-      const distance = ball.body.position.distanceTo(tip);
-      if (distance < bestDistance) {
-        best = ball;
-        bestDistance = distance;
-      }
-    }
-    return best;
-  }
-
-  function updateClaw(dt: number) {
+  function stepClaw(dt: number) {
     phaseTime += dt;
-    gripTarget =
-      phase === 'closing' || phase === 'raising' || phase === 'carrying'
-        ? 1
-        : 0;
-    grip +=
-      Math.sign(gripTarget - grip) *
-      Math.min(Math.abs(gripTarget - grip), dt * 2.8);
+
+    if (!revealRoot) {
+      const lost = balls.find((ball) => ball.body.position.y < PIT_Y);
+      if (lost) startReveal(lost);
+    }
+    updateReveal(dt);
 
     switch (phase) {
-      case 'idle': {
+      case 'idle':
+        gripTarget = 0;
         moveClaw(dt);
-        const lost = balls.find((ball) => ball.body.position.y < PIT_Y);
-        if (lost) {
-          freeReveal = true;
-          startReveal(lost);
-        }
         break;
-      }
       case 'lowering':
-        clawY = Math.max(CLAW_MIN_Y, clawY - 4.5 * dt);
+        gripTarget = 0;
+        clawY = Math.max(CLAW_MIN_Y, clawY - 4 * dt);
         if (clawY === CLAW_MIN_Y) setPhase('closing');
         break;
       case 'closing':
-        if (phaseTime >= 0.55) {
-          held = grabNearest();
-          if (held) {
-            held.body.type = CANNON.Body.KINEMATIC;
-            held.body.mass = 0;
-            held.body.updateMassProperties();
-            outcome = 'grab';
-            slipHeight = Math.random() < 0.3 ? 2.4 + Math.random() * 1.6 : null;
-          } else {
-            outcome = 'miss';
-          }
-          setPhase('raising');
-        }
+        gripTarget = 1;
+        if (grip === 1 && phaseTime > 1.1) setPhase('raising');
         break;
       case 'raising':
-        clawY = Math.min(CLAW_MAX_Y, clawY + 3.6 * dt);
-        if (held && slipHeight !== null && clawY > slipHeight) {
-          releaseHeld();
-          outcome = 'slip';
-        }
+        gripTarget = 1;
+        clawY = Math.min(CLAW_MAX_Y, clawY + 3 * dt);
         if (clawY === CLAW_MAX_Y) {
-          if (held) {
-            target.x = pos.x;
-            target.z = pos.z;
-            setPhase('carrying');
-          } else {
-            finish({ kind: outcome === 'slip' ? 'slip' : 'miss' });
-          }
+          target.x = pos.x;
+          target.z = pos.z;
+          setPhase('carrying');
         }
         break;
       case 'carrying': {
+        gripTarget = 1;
         const dx = chutePosition.x - pos.x;
         const dz = chutePosition.z - pos.z;
         const distance = Math.hypot(dx, dz);
-        const step = Math.min(distance, 3.2 * dt);
+        const step = Math.min(distance, 2.6 * dt);
         if (distance > 0) {
           pos.x += (dx / distance) * step;
           pos.z += (dz / distance) * step;
@@ -583,44 +616,33 @@ export function createClawScene(
         break;
       }
       case 'releasing':
-        if (phaseTime >= 0.4) {
-          dropping = held;
-          releaseHeld();
-          setPhase('falling');
-        }
-        break;
-      case 'falling':
-        if (dropping && (dropping.body.position.y < PIT_Y || phaseTime > 3)) {
-          startReveal(dropping);
-          dropping = null;
-        }
-        break;
-      case 'revealing':
-        updateReveal();
-        if (phaseTime >= 1.9) {
-          const prize = revealPrize;
-          if (freeReveal && prize) options.onFreePrize?.(prize);
-          freeReveal = false;
-          if (prize && resolveDrop) finish({ kind: 'prize', prize });
-          else setPhase('idle');
+        gripTarget = 0;
+        if (phaseTime >= 1.6) {
+          finish({ kind: won ? 'prize' : lifted ? 'slip' : 'miss' });
         }
         break;
     }
 
-    if (phase === 'revealing') updateReveal();
-
-    if (held) {
-      held.body.position.set(pos.x, clawY - 0.55, pos.z);
-      held.body.velocity.setZero();
+    if (phase === 'raising' || phase === 'carrying') {
+      const tipY = clawY - 0.9;
+      if (
+        balls.some(
+          (ball) =>
+            ball.body.position.y > 1.6 &&
+            Math.hypot(
+              ball.body.position.x - pos.x,
+              ball.body.position.z - pos.z
+            ) < 0.7 &&
+            Math.abs(ball.body.position.y - tipY) < 1.1
+        )
+      ) {
+        lifted = true;
+      }
     }
 
-    const previous = headBody.position.clone();
-    headBody.position.set(pos.x, clawY - 0.25, pos.z);
-    headBody.velocity.set(
-      (pos.x - previous.x) / Math.max(dt, 1e-3),
-      (clawY - 0.25 - previous.y) / Math.max(dt, 1e-3),
-      (pos.z - previous.z) / Math.max(dt, 1e-3)
-    );
+    grip +=
+      Math.sign(gripTarget - grip) *
+      Math.min(Math.abs(gripTarget - grip), dt * 1.4);
 
     clawGroup.position.set(pos.x, clawY, pos.z);
     const angle = GRIP_OPEN + (GRIP_CLOSED - GRIP_OPEN) * grip;
@@ -628,17 +650,25 @@ export function createClawScene(
     trolley.position.set(pos.x, 6, pos.z);
     cable.position.set(pos.x, (6 + clawY) / 2, pos.z);
     cable.scale.y = 6 - clawY;
+    driveClawBodies(dt);
   }
 
-  // Loop.
+  // Loop with a fixed physics step so the kinematic claw pushes balls reliably.
   let frameId = 0;
   let last = 0;
+  let accumulator = 0;
   function frame(now: number) {
     frameId = requestAnimationFrame(frame);
-    const dt = Math.min(0.05, (now - last) / 1000);
+    accumulator += Math.min(0.1, (now - last) / 1000);
     last = now;
-    world.step(1 / 60, dt, 3);
-    updateClaw(dt);
+    let steps = 0;
+    while (accumulator >= FIXED_STEP && steps < 5) {
+      stepClaw(FIXED_STEP);
+      world.step(FIXED_STEP);
+      accumulator -= FIXED_STEP;
+      steps += 1;
+    }
+    if (steps === 5) accumulator = 0;
     balls.forEach(syncBall);
     renderer.render(scene, camera);
   }
@@ -667,17 +697,15 @@ export function createClawScene(
   visibility.observe(canvas);
   resize();
   fillMachine();
-  updateClaw(0);
+  stepClaw(FIXED_STEP);
   renderer.render(scene, camera);
 
   return {
     setDirection(next) {
       direction = next;
-      if (phase === 'idle' && (next.x || next.z)) clearReveal();
     },
     nudge(next) {
       if (phase !== 'idle') return;
-      clearReveal();
       const moved = clampClaw({
         x: target.x + next.x * 0.7,
         z: target.z + next.z * 0.7
@@ -689,8 +717,9 @@ export function createClawScene(
       if (phase !== 'idle' || balls.length === 0) {
         return Promise.resolve<DropResult>({ kind: 'busy' });
       }
-      clearReveal();
       direction = { x: 0, z: 0 };
+      lifted = false;
+      won = false;
       setPhase('lowering');
       return new Promise<DropResult>((resolve) => {
         resolveDrop = resolve;

@@ -275,6 +275,7 @@ export function createClawScene(
       mass: 0,
       type: CANNON.Body.KINEMATIC,
       material: clawMaterial,
+      allowSleep: false,
       shape
     });
     world.addBody(body);

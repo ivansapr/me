@@ -2,6 +2,7 @@ import ChordNotesCard from './ChordNotesCard.svelte';
 import FitnessCard from './Gym/FitnessCard.svelte';
 import TickspotApiCard from './TickspotApiCard.svelte';
 import WishlistCard from './WishlistCard.svelte';
+import ZigzigBotCard from './ZigzigBotCard.svelte';
 import type { ProjectDefinition } from '$lib/types/projects';
 
 export const projects = [
@@ -45,6 +46,19 @@ export const projects = [
   }
 ] satisfies readonly ProjectDefinition[];
 
+export const friendProjects = [
+  {
+    slug: 'zigzigbot',
+    title: 'ZigZig Bot',
+    author: 'Alexander Timofeev',
+    description: 'Take a look at what Alexander is building.',
+    href: 'https://zigzigbot.top/',
+    order: 1,
+    theme: { background: '#c9f0e4', foreground: '#0f2e27', accent: '#0f5c4a' },
+    visual: ZigzigBotCard
+  }
+] satisfies readonly ProjectDefinition[];
+
 export function validateProjectRegistry(
   entries: readonly ProjectDefinition[]
 ): void {
@@ -59,4 +73,4 @@ export function validateProjectRegistry(
   }
 }
 
-validateProjectRegistry(projects);
+validateProjectRegistry([...projects, ...friendProjects]);

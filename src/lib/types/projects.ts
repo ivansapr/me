@@ -14,6 +14,8 @@ export type ProjectDefinition = {
   slug: string;
   title: string;
   description: string;
+  /** Set for friends' projects; omitted for Ivan's own work. */
+  author?: string;
   href: `https://${string}`;
   order: number;
   theme: ProjectCardTheme;

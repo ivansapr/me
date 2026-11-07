@@ -1,13 +1,16 @@
 <script lang="ts">
   import type { ProjectCardVisualProps } from '$lib/types/projects';
 
-  let { theme }: ProjectCardVisualProps = $props();
-  let zigs = $state(0);
+  type CareState = 'due' | 'watered' | 'snoozed';
 
-  const replies = ['zig!', 'zag!', 'zig-zig!', 'beep', 'zzz…'];
-  let reply = $derived(
-    zigs === 0 ? 'hi!' : replies[(zigs - 1) % replies.length]
-  );
+  let { theme }: ProjectCardVisualProps = $props();
+  let care = $state<CareState>('due');
+
+  const messages: Record<CareState, string> = {
+    due: 'Monstera: time to check the soil. Dry two fingers deep?',
+    watered: 'Watering logged. Next soil check in 7 days.',
+    snoozed: 'Got it. I’ll ask again tomorrow.'
+  };
 </script>
 
 <div
@@ -16,140 +19,187 @@
   style:--card-accent={theme.accent}
   style:--card-foreground={theme.foreground}
 >
+  <div class="chat">
+    <p class="sender">ZigZig</p>
+    <p class="message" aria-live="polite">{messages[care]}</p>
+    {#if care === 'due'}
+      <div class="actions">
+        <button type="button" onclick={() => (care = 'watered')}>
+          Watered
+        </button>
+        <button type="button" onclick={() => (care = 'snoozed')}>
+          Tomorrow
+        </button>
+      </div>
+    {:else}
+      <div class="actions">
+        <button type="button" onclick={() => (care = 'due')}>
+          Show reminder again
+        </button>
+      </div>
+    {/if}
+  </div>
+
   <svg
-    class="trail"
-    viewBox="0 0 200 40"
-    preserveAspectRatio="none"
+    class={['plant', { 'is-watered': care === 'watered' }]}
+    viewBox="0 0 120 120"
     aria-hidden="true"
   >
-    <polyline
-      points="0,30 20,10 40,30 60,10 80,30 100,10 120,30 140,10 160,30 180,10 200,30"
-    />
+    <g class="drops">
+      <path d="M30 18c-3 5-4 7-4 9a4 4 0 0 0 8 0c0-2-1-4-4-9z" />
+      <path d="M92 10c-3 5-4 7-4 9a4 4 0 0 0 8 0c0-2-1-4-4-9z" />
+      <path d="M78 30c-2 4-3 5-3 7a3 3 0 0 0 6 0c0-2-1-3-3-7z" />
+    </g>
+    <g class="leaves">
+      <path class="stem" d="M60 84V46" />
+      <path class="leaf" d="M60 60C44 58 32 46 30 30c16 2 28 14 30 30z" />
+      <path class="leaf" d="M60 52c4-16 18-26 34-24-2 16-16 26-34 24z" />
+      <path class="leaf" d="M60 72c-12 0-24-8-26-20 12 0 24 8 26 20z" />
+    </g>
+    <path class="pot" d="M36 82h48l-6 32H42z" />
+    <rect class="rim" x="32" y="78" width="56" height="9" rx="3" />
   </svg>
-
-  <p class="bubble" aria-live="polite">{reply}</p>
-
-  <button
-    class={['bot', { 'is-zig': zigs % 2 === 1 }]}
-    type="button"
-    aria-label="Poke the bot"
-    onclick={() => (zigs += 1)}
-  >
-    <svg viewBox="0 0 120 130" aria-hidden="true">
-      <polyline class="antenna" points="60,30 52,20 66,13 56,4" />
-      <circle class="antenna-tip" cx="56" cy="4" r="4" />
-      <rect class="head" x="18" y="30" width="84" height="62" rx="18" />
-      <rect class="face" x="30" y="44" width="60" height="32" rx="10" />
-      <circle class="eye" cx="47" cy="60" r="5" />
-      <circle class="eye" cx="73" cy="60" r="5" />
-      <polyline class="mouth" points="48,70 54,66 60,70 66,66 72,70" />
-      <rect class="body" x="38" y="96" width="44" height="26" rx="8" />
-    </svg>
-  </button>
 </div>
 
 <style>
   .zigzig {
-    position: relative;
     display: grid;
     height: 100%;
     min-height: 15rem;
-    place-items: center;
-    align-content: center;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    align-items: center;
     gap: 0.5rem;
+    padding: 1rem;
     overflow: hidden;
     border-radius: 0.65rem;
-    background: var(--card-background);
+    background:
+      radial-gradient(
+        circle at 85% 20%,
+        rgb(255 255 255 / 60%),
+        transparent 40%
+      ),
+      var(--card-background);
     color: var(--card-foreground);
   }
 
-  .trail {
-    position: absolute;
-    inset: auto 0 18% 0;
-    width: 100%;
-    height: 2.5rem;
-    opacity: 0.35;
+  .chat {
+    padding: 0.7rem 0.75rem;
+    border-radius: 0.9rem 0.9rem 0.9rem 0.2rem;
+    background: #fff;
+    box-shadow: 0 0.2rem 0 rgb(15 46 39 / 12%);
   }
 
-  .trail polyline {
+  .sender {
+    margin: 0 0 0.25rem;
+    color: var(--card-accent);
+    font-size: 0.68rem;
+    font-weight: 800;
+  }
+
+  .message {
+    margin: 0;
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.6rem;
+  }
+
+  button {
+    min-height: 2rem;
+    flex: 1;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
+    border-radius: 0.45rem;
+    background: color-mix(in srgb, var(--card-background) 55%, #fff);
+    color: var(--card-accent);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    touch-action: manipulation;
+  }
+
+  button:hover {
+    background: var(--card-background);
+  }
+
+  button:focus-visible {
+    outline: 2px solid var(--card-foreground);
+    outline-offset: 2px;
+  }
+
+  .plant {
+    width: 100%;
+    max-width: 9rem;
+    justify-self: center;
+  }
+
+  .leaves {
+    transform-box: view-box;
+    transform-origin: 60px 84px;
+    transform: rotate(-6deg) scaleY(0.9);
+    transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .is-watered .leaves {
+    transform: none;
+  }
+
+  .stem {
     fill: none;
     stroke: var(--card-accent);
-    stroke-width: 3;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-  }
-
-  .bubble {
-    position: relative;
-    margin: 0;
-    padding: 0.3rem 0.7rem;
-    border: 1px solid var(--card-foreground);
-    border-radius: 999px;
-    background: #fff;
-    font-size: 0.75rem;
-    font-weight: 700;
-  }
-
-  .bot {
-    position: relative;
-    width: 7.5rem;
-    padding: 0;
-    border: 0;
-    border-radius: 1rem;
-    background: none;
-    cursor: pointer;
-    touch-action: manipulation;
-    transition: transform 180ms ease;
-  }
-
-  .bot.is-zig {
-    transform: rotate(-8deg) translateX(-0.3rem);
-  }
-
-  .bot:not(.is-zig):active {
-    transform: rotate(8deg);
-  }
-
-  .bot:focus-visible {
-    outline: 2px solid var(--card-foreground);
-    outline-offset: 0.3rem;
-  }
-
-  .bot svg {
-    display: block;
-    width: 100%;
-  }
-
-  .head,
-  .body {
-    fill: var(--card-accent);
-  }
-
-  .face {
-    fill: #fff;
-  }
-
-  .eye {
-    fill: var(--card-foreground);
-  }
-
-  .antenna,
-  .mouth {
-    fill: none;
-    stroke: var(--card-foreground);
-    stroke-width: 3.5;
+    stroke-width: 4;
     stroke-linecap: round;
+  }
+
+  .leaf {
+    fill: #2f9e6e;
+    stroke: var(--card-accent);
+    stroke-width: 2.5;
     stroke-linejoin: round;
   }
 
-  .antenna-tip {
-    fill: #ffd84d;
+  .pot {
+    fill: #d9774b;
     stroke: var(--card-foreground);
-    stroke-width: 2;
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+  }
+
+  .rim {
+    fill: #e8895c;
+    stroke: var(--card-foreground);
+    stroke-width: 2.5;
+  }
+
+  .drops path {
+    fill: #4aa8e8;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition:
+      opacity 300ms ease,
+      transform 300ms ease;
+  }
+
+  .is-watered .drops path {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (max-width: 380px) {
+    .zigzig {
+      padding: 0.7rem;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .bot {
+    .leaves,
+    .drops path {
       transition: none;
     }
   }

@@ -49,9 +49,10 @@ export const projects = [
 export const friendProjects = [
   {
     slug: 'zigzigbot',
-    title: 'ZigZig Bot',
+    title: 'ZigZig Plant Bot',
     author: 'Alexander Timofeev',
-    description: 'Take a look at what Alexander is building.',
+    description:
+      'A free Telegram bot that identifies houseplants and reminds you to check the soil.',
     href: 'https://zigzigbot.top/',
     order: 1,
     theme: { background: '#c9f0e4', foreground: '#0f2e27', accent: '#0f5c4a' },

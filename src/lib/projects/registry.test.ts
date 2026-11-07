@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectDefinition } from '$lib/types/projects';
-import { projects, validateProjectRegistry } from './registry';
+import { friendProjects, projects, validateProjectRegistry } from './registry';
 
 describe('project registry', () => {
   it('contains the initial projects in stable order', () => {
@@ -12,8 +12,16 @@ describe('project registry', () => {
     ]);
   });
 
+  it('lists friends projects with their authors', () => {
+    expect(
+      friendProjects.map(({ slug, author }) => ({ slug, author }))
+    ).toEqual([{ slug: 'zigzigbot', author: 'Alexander Timofeev' }]);
+  });
+
   it('accepts the production registry', () => {
-    expect(() => validateProjectRegistry(projects)).not.toThrow();
+    expect(() =>
+      validateProjectRegistry([...projects, ...friendProjects])
+    ).not.toThrow();
   });
 
   it('rejects duplicate slugs and non-HTTPS links', () => {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
   import ProjectCard from '$lib/components/ProjectCard.svelte';
-  import { projects } from '$lib/projects/registry';
+  import { friendProjects, projects } from '$lib/projects/registry';
 
   const siteUrl = env.PUBLIC_SITE_URL;
 </script>
@@ -32,10 +32,25 @@
     </p>
   </header>
 
-  <section class="project-grid" aria-label="Projects">
-    {#each projects.toSorted((a, b) => a.order - b.order) as project (project.slug)}
-      <ProjectCard {project} />
-    {/each}
+  <section aria-labelledby="projects-heading">
+    <h2 id="projects-heading" class="section-heading">Projects</h2>
+    <div class="project-grid">
+      {#each projects.toSorted((a, b) => a.order - b.order) as project (project.slug)}
+        <ProjectCard {project} />
+      {/each}
+    </div>
+  </section>
+
+  <section class="friends" aria-labelledby="friends-heading">
+    <header class="section-header">
+      <h2 id="friends-heading" class="section-heading">Friends</h2>
+      <p>Things made by people I like working with.</p>
+    </header>
+    <div class="project-grid">
+      {#each friendProjects.toSorted((a, b) => a.order - b.order) as project (project.slug)}
+        <ProjectCard {project} />
+      {/each}
+    </div>
   </section>
 </main>
 
@@ -95,6 +110,33 @@
     font-size: 1rem;
     line-height: 1.5;
   }
+  .section-heading {
+    margin: 0 0 1.25rem;
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .friends {
+    margin-top: clamp(3rem, 7vw, 6rem);
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--ink);
+  }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .section-header .section-heading {
+    margin: 0;
+  }
+  .section-header p {
+    margin: 0;
+    color: #5c5c5c;
+    font-size: 0.86rem;
+  }
   .project-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -111,6 +153,10 @@
     }
     .lede {
       margin-top: 1.5rem;
+    }
+    .section-header {
+      flex-direction: column;
+      gap: 0.4rem;
     }
   }
   @media (max-width: 560px) {

@@ -14,7 +14,10 @@
   </div>
   <div class="project-card__details">
     <div>
-      <h2>{project.title}</h2>
+      <h3>{project.title}</h3>
+      {#if project.author}
+        <p class="author">by {project.author}</p>
+      {/if}
       <p>{project.description}</p>
     </div>
     <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
@@ -55,7 +58,7 @@
     gap: 1rem;
     padding: 1.25rem;
   }
-  h2 {
+  h3 {
     margin: 0;
     font-family: var(--font-serif);
     font-size: clamp(1.25rem, 2vw, 1.65rem);
@@ -68,6 +71,14 @@
     color: #5c5c5c;
     font-size: 0.86rem;
     line-height: 1.4;
+  }
+  .author {
+    margin-top: 0.3rem;
+    color: var(--ink);
+    font-size: 0.72rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   .open-link {
     display: inline-flex;

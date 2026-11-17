@@ -1,3 +1,4 @@
+import AirwaysCard from './AirwaysCard.svelte';
 import ChordNotesCard from './ChordNotesCard.svelte';
 import FitnessCard from './Gym/FitnessCard.svelte';
 import TickspotApiCard from './TickspotApiCard.svelte';
@@ -43,6 +44,16 @@ export const projects = [
     order: 4,
     theme: { background: '#ffd2a8', foreground: '#3b1d0f', accent: '#7a2e12' },
     visual: WishlistCard
+  },
+  {
+    slug: 'airways',
+    title: 'Airways',
+    description:
+      'A Telegram bot that sends live alerts when aircraft fly near a location you share.',
+    href: 'https://github.com/ivansapr/airways',
+    order: 5,
+    theme: { background: '#1e2129', foreground: '#ffc233', accent: '#ffc233' },
+    visual: AirwaysCard
   }
 ] satisfies readonly ProjectDefinition[];
 

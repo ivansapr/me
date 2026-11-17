@@ -8,7 +8,8 @@ describe('project registry', () => {
       'fitness-tracker',
       'chord-notes',
       'tickspot-api',
-      'wishlist'
+      'wishlist',
+      'airways'
     ]);
   });
 
